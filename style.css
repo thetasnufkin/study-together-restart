@@ -1,0 +1,648 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  min-height: 100vh;
+  color: #fff;
+}
+
+.container {
+  max-width: 500px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+/* ヘッダー */
+.header {
+  text-align: center;
+  padding: 30px 0;
+}
+
+.header h1 {
+  font-size: 1.8rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.header p {
+  color: #8892b0;
+  font-size: 0.9rem;
+}
+
+/* セットアップ画面 */
+.setup-screen {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 20px;
+  padding: 30px;
+  margin-top: 20px;
+}
+
+.setup-screen h2 {
+  font-size: 1.2rem;
+  margin-bottom: 20px;
+  color: #64ffda;
+}
+
+.setup-step {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 15px;
+}
+
+.setup-step h3 {
+  font-size: 0.95rem;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.step-number {
+  background: #64ffda;
+  color: #1a1a2e;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.setup-step p {
+  color: #8892b0;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  margin-bottom: 10px;
+}
+
+.setup-step code {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  color: #64ffda;
+}
+
+.setup-step a {
+  color: #64ffda;
+}
+
+.config-input {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  color: #fff;
+  font-family: monospace;
+  font-size: 0.85rem;
+  margin-top: 10px;
+  resize: vertical;
+  min-height: 120px;
+}
+
+.config-input:focus {
+  outline: none;
+  border-color: #64ffda;
+}
+
+/* 参加画面 */
+.join-screen {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 20px;
+  padding: 30px;
+  margin-top: 20px;
+  display: none;
+}
+
+.join-screen.active {
+  display: block;
+}
+
+.input-group {
+  margin-bottom: 20px;
+}
+
+.input-group label {
+  display: block;
+  margin-bottom: 8px;
+  color: #ccd6f6;
+  font-size: 0.9rem;
+}
+
+.input-group input {
+  width: 100%;
+  padding: 14px 18px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  font-size: 1rem;
+  transition: border-color 0.3s;
+}
+
+.input-group input:focus {
+  outline: none;
+  border-color: #64ffda;
+}
+
+.btn {
+  width: 100%;
+  padding: 16px;
+  border: none;
+  border-radius: 12px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.btn:hover {
+  transform: translateY(-2px);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #64ffda 0%, #48c9b0 100%);
+  color: #1a1a2e;
+}
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  margin-top: 12px;
+}
+
+/* メイン画面 */
+.main-screen {
+  display: none;
+}
+
+.main-screen.active {
+  display: block;
+}
+
+.setup-screen.hidden,
+.join-screen.hidden {
+  display: none;
+}
+
+/* 接続ステータス */
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 30px;
+  font-size: 0.85rem;
+  margin-bottom: 20px;
+  justify-content: center;
+}
+
+.connection-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ffd93d;
+}
+
+.connection-dot.connected {
+  background: #64ffda;
+}
+
+.connection-dot.error {
+  background: #ff6b6b;
+}
+
+/* ステータス表示 */
+.status-badge {
+  display: inline-block;
+  padding: 8px 20px;
+  border-radius: 30px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 20px;
+}
+
+.status-work {
+  background: rgba(255, 107, 107, 0.2);
+  color: #ff6b6b;
+}
+
+.status-break {
+  background: rgba(100, 255, 218, 0.2);
+  color: #64ffda;
+}
+
+/* タイマー */
+.timer-container {
+  text-align: center;
+  padding: 40px 0;
+}
+
+.timer-display {
+  font-size: 5rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -2px;
+  margin-bottom: 10px;
+}
+
+.timer-label {
+  color: #8892b0;
+  font-size: 1rem;
+}
+
+/* プログレスリング */
+.progress-ring {
+  width: 280px;
+  height: 280px;
+  margin: 0 auto 30px;
+  position: relative;
+}
+
+.progress-ring svg {
+  transform: rotate(-90deg);
+}
+
+.progress-ring-circle {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.1);
+  stroke-width: 8;
+}
+
+.progress-ring-progress {
+  fill: none;
+  stroke: #64ffda;
+  stroke-width: 8;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.5s ease-out;
+}
+
+.progress-ring-progress.work {
+  stroke: #ff6b6b;
+}
+
+.timer-inner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+}
+
+/* サイクル表示 */
+.cycle-indicator {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.cycle-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.cycle-dot.completed {
+  background: #64ffda;
+}
+
+.cycle-dot.current {
+  background: #ffd93d;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.2); opacity: 0.7; }
+}
+
+/* 参加者リスト */
+.participants {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 16px;
+  padding: 20px;
+  margin-top: 20px;
+}
+
+.participants h3 {
+  font-size: 0.9rem;
+  color: #8892b0;
+  margin-bottom: 15px;
+}
+
+.participant-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.participant {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 8px 14px;
+  border-radius: 20px;
+  font-size: 0.9rem;
+}
+
+.participant.speaking {
+  background: rgba(100, 255, 218, 0.1);
+  border: 1px solid rgba(100, 255, 218, 0.3);
+}
+
+.participant-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #64ffda;
+}
+
+.participant-dot.offline {
+  background: #8892b0;
+}
+
+.participant-dot.speaking {
+  background: #ffd93d;
+  animation: pulse 0.5s infinite;
+}
+
+/* 通話UI */
+.call-ui {
+  background: linear-gradient(135deg, rgba(100, 255, 218, 0.1) 0%, rgba(72, 201, 176, 0.1) 100%);
+  border: 1px solid rgba(100, 255, 218, 0.3);
+  border-radius: 16px;
+  padding: 20px;
+  margin-top: 20px;
+  text-align: center;
+  display: none;
+}
+
+.call-ui.active {
+  display: block;
+}
+
+.call-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.call-icon {
+  width: 40px;
+  height: 40px;
+  background: #64ffda;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: pulse 2s infinite;
+}
+
+.call-icon svg {
+  width: 20px;
+  height: 20px;
+  fill: #1a1a2e;
+}
+
+.call-buttons {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.call-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  padding: 12px 24px;
+  border-radius: 30px;
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.3s;
+  font-size: 0.9rem;
+}
+
+.call-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.call-btn.active {
+  background: rgba(255, 107, 107, 0.3);
+  color: #ff6b6b;
+}
+
+/* オーディオビジュアライザー */
+.audio-visualizer {
+  display: flex;
+  justify-content: center;
+  gap: 3px;
+  height: 40px;
+  align-items: flex-end;
+  margin: 15px 0;
+}
+
+.audio-bar {
+  width: 4px;
+  background: #64ffda;
+  border-radius: 2px;
+  transition: height 0.05s;
+  min-height: 4px;
+}
+
+/* ルーム情報 */
+.room-info {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 15px;
+  margin-top: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.room-code {
+  font-family: monospace;
+  font-size: 1.2rem;
+  color: #64ffda;
+  letter-spacing: 2px;
+}
+
+.copy-btn {
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #8892b0;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.3s;
+}
+
+.copy-btn:hover {
+  border-color: #64ffda;
+  color: #64ffda;
+}
+
+/* コントロールボタン */
+.controls {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.controls .btn {
+  flex: 1;
+}
+
+.btn-danger {
+  background: rgba(255, 107, 107, 0.2);
+  color: #ff6b6b;
+}
+
+/* 通知 */
+.notification {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%) translateY(100px);
+  background: rgba(100, 255, 218, 0.95);
+  color: #1a1a2e;
+  padding: 14px 28px;
+  border-radius: 30px;
+  font-weight: 600;
+  transition: transform 0.3s ease-out;
+  z-index: 1000;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.notification.show {
+  transform: translateX(-50%) translateY(0);
+}
+
+.notification.error {
+  background: rgba(255, 107, 107, 0.95);
+  color: #fff;
+}
+
+/* ローディング */
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 20px;
+  color: #8892b0;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-top-color: #64ffda;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 設定モーダル */
+.settings-toggle {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  color: #fff;
+  cursor: pointer;
+  font-size: 1.2rem;
+  transition: background 0.3s;
+}
+
+.settings-toggle:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.settings-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.settings-modal.active {
+  display: flex;
+}
+
+.settings-content {
+  background: #1a1a2e;
+  border-radius: 20px;
+  padding: 30px;
+  width: 90%;
+  max-width: 400px;
+}
+
+.settings-content h2 {
+  margin-bottom: 20px;
+}
+
+.setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.setting-row:last-child {
+  border-bottom: none;
+}
+
+.setting-row label {
+  color: #ccd6f6;
+}
+
+.setting-row input[type="number"] {
+  width: 80px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  text-align: center;
+  font-size: 1rem;
+}
+
+.close-settings {
+  margin-top: 20px;
+}
