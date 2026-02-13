@@ -3,73 +3,27 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Study Together - 共同学習タイマー</title>
-  
-  <link rel="stylesheet" href="style.css">
-  
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
-  
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <title>Study Together - みんなで集中</title>
 
-  <script src="script.js" defer></script>
+  <link rel="stylesheet" href="style.css">
+
+  <script defer src="/__/firebase/10.7.1/firebase-app-compat.js"></script>
+  <script defer src="/__/firebase/10.7.1/firebase-database-compat.js"></script>
+  <script defer src="/__/firebase/init.js"></script>
+
+  <script defer src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <script defer src="script.js?v=20260213-1"></script>
 </head>
 <body>
-  <button class="settings-toggle" onclick="toggleSettings()" title="設定">⚙️</button>
+  <button class="settings-toggle" onclick="toggleSettings()" title="設定">設定</button>
 
   <div class="container">
     <div class="header">
-      <h1>📚 Study Together</h1>
-      <p>仲間と一緒に集中 → 休憩で通話</p>
+      <h1>Study Together</h1>
+      <p>一緒に集中、休憩で通話</p>
     </div>
 
-    <div class="setup-screen" id="setupScreen">
-      <h2>🔧 初期セットアップ</h2>
-      
-      <div class="setup-step">
-        <h3><span class="step-number">1</span>Firebase プロジェクトを作成</h3>
-        <p>
-          <a href="https://console.firebase.google.com/" target="_blank">Firebase Console</a> にアクセスし、新しいプロジェクトを作成します。<br>
-          （Googleアカウントが必要です）
-        </p>
-      </div>
-
-      <div class="setup-step">
-        <h3><span class="step-number">2</span>Realtime Database を有効化</h3>
-        <p>
-          左メニューから「構築」→「Realtime Database」を選択し、データベースを作成します。<br>
-          ロケーションは近い地域を選択。セキュリティルールは「テストモード」で開始。
-        </p>
-      </div>
-
-      <div class="setup-step">
-        <h3><span class="step-number">3</span>設定情報を貼り付け</h3>
-        <p>
-          プロジェクト設定 → 「マイアプリ」→ ウェブアプリを追加 →<br>
-          表示される <code>firebaseConfig</code> の中身をコピーして下に貼り付けてください。
-        </p>
-        <textarea 
-          class="config-input" 
-          id="firebaseConfigInput"
-          placeholder='{
-  "apiKey": "AIza...",
-  "authDomain": "your-project.firebaseapp.com",
-  "databaseURL": "https://your-project-default-rtdb.firebaseio.com",
-  "projectId": "your-project",
-  "storageBucket": "your-project.appspot.com",
-  "messagingSenderId": "123456789",
-  "appId": "1:123456789:web:abc123"
-}'></textarea>
-      </div>
-
-      <button class="btn btn-primary" onclick="saveFirebaseConfig()">設定を保存して続ける</button>
-      
-      <p style="margin-top: 20px; font-size: 0.8rem; color: #8892b0; text-align: center;">
-        設定はこのブラウザに保存されます。友人も同じ設定を使用してください。
-      </p>
-    </div>
-
-    <div class="join-screen" id="joinScreen">
+    <div class="join-screen active" id="joinScreen">
       <div class="connection-status" id="connectionStatus">
         <span class="connection-dot" id="connectionDot"></span>
         <span id="connectionText">Firebase に接続中...</span>
@@ -80,21 +34,17 @@
         <input type="text" id="nickname" placeholder="例: たろう" maxlength="10">
       </div>
       <div class="input-group">
-        <label>ルームID（新規作成は空欄でOK）</label>
+        <label>ルームID (作成時は入力不要)</label>
         <input type="text" id="roomId" placeholder="例: ABC123" maxlength="6" style="text-transform: uppercase;">
       </div>
       <button class="btn btn-primary" onclick="joinRoom()" id="joinBtn">参加する</button>
       <button class="btn btn-secondary" onclick="createRoom()" id="createBtn">新しいルームを作成</button>
-
-      <p style="margin-top: 20px; font-size: 0.8rem; color: #8892b0; text-align: center;">
-        <a href="#" onclick="resetConfig()" style="color: #8892b0;">Firebase設定をリセット</a>
-      </p>
     </div>
 
     <div class="main-screen" id="mainScreen">
       <div class="timer-container">
-        <span class="status-badge status-work" id="statusBadge">🎯 作業中</span>
-        
+        <span class="status-badge status-work" id="statusBadge">作業中</span>
+
         <div class="cycle-indicator" id="cycleIndicator">
           <div class="cycle-dot current"></div>
           <div class="cycle-dot"></div>
@@ -110,7 +60,7 @@
           </svg>
           <div class="timer-inner">
             <div class="timer-display" id="timerDisplay">20:00</div>
-            <div class="timer-label" id="timerLabel">集中タイム</div>
+            <div class="timer-label" id="timerLabel">作業タイム</div>
           </div>
         </div>
       </div>
@@ -120,7 +70,7 @@
           <div class="call-icon">
             <svg viewBox="0 0 24 24"><path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56a.977.977 0 00-1.01.24l-1.57 1.97c-2.83-1.35-5.48-3.9-6.89-6.83l1.95-1.66c.27-.28.35-.67.24-1.02-.37-1.11-.56-2.3-.56-3.53 0-.54-.45-.99-.99-.99H4.19C3.65 3 3 3.24 3 3.99 3 13.28 10.73 21 20.01 21c.71 0 .99-.63.99-1.18v-3.45c0-.54-.45-.99-.99-.99z"/></svg>
           </div>
-          <span>☕ 休憩通話中</span>
+          <span>休憩通話中</span>
         </div>
         <div class="audio-visualizer" id="audioVisualizer">
           <div class="audio-bar"></div>
@@ -133,14 +83,13 @@
           <div class="audio-bar"></div>
         </div>
         <div class="call-buttons">
-          <button class="call-btn" id="muteBtn" onclick="toggleMute()">🎤 ミュート</button>
+          <button class="call-btn" id="muteBtn" onclick="toggleMute()">ミュート</button>
         </div>
       </div>
 
       <div class="participants">
-        <h3>👥 参加者 (<span id="participantCount">0</span>人)</h3>
-        <div class="participant-list" id="participantList">
-          </div>
+        <h3>参加者 (<span id="participantCount">0</span>人)</h3>
+        <div class="participant-list" id="participantList"></div>
       </div>
 
       <div class="room-info">
@@ -148,24 +97,28 @@
           <small style="color: #8892b0;">ルームID</small><br>
           <span class="room-code" id="roomCodeDisplay">-</span>
         </div>
-        <button class="copy-btn" onclick="copyRoomCode()">📋 コピー</button>
+        <button class="copy-btn" onclick="copyRoomCode()">コピー</button>
       </div>
 
       <div class="controls">
-        <button class="btn btn-danger" onclick="leaveRoom()">🚪 退出</button>
+        <div class="host-controls" id="hostControls">
+          <button class="btn btn-primary" id="hostStartStopBtn" onclick="toggleHostTimer()">開始</button>
+          <button class="btn btn-secondary" id="hostSkipBtn" onclick="skipToBreak()">休憩へスキップ</button>
+        </div>
+        <button class="btn btn-danger" onclick="leaveRoom()">退出</button>
       </div>
     </div>
   </div>
 
   <div class="settings-modal" id="settingsModal">
     <div class="settings-content">
-      <h2>⚙️ タイマー設定</h2>
+      <h2>タイマー設定</h2>
       <div class="setting-row">
-        <label>作業時間（分）</label>
+        <label>作業時間 (分)</label>
         <input type="number" id="workMinutes" value="20" min="1" max="60">
       </div>
       <div class="setting-row">
-        <label>休憩時間（分）</label>
+        <label>休憩時間 (分)</label>
         <input type="number" id="breakMinutes" value="5" min="1" max="30">
       </div>
       <button class="btn btn-primary close-settings" onclick="saveSettings()">保存して閉じる</button>

@@ -1,0 +1,21 @@
+{
+  "rules": {
+    "rooms": {
+      "$roomId": {
+        ".read": "$roomId.matches(/^[A-Z2-9]{6}$/)",
+        ".write": "$roomId.matches(/^[A-Z2-9]{6}$/)",
+        "participants": {
+          "$peerId": {
+            ".validate": "!newData.exists() || (newData.hasChildren(['nickname', 'joinedAt', 'lastSeen', 'peerId']) && newData.child('nickname').isString() && newData.child('nickname').val().length > 0 && newData.child('nickname').val().length <= 10 && newData.child('peerId').isString() && newData.child('peerId').val() === $peerId)"
+          }
+        },
+        "timer": {
+          ".validate": "newData.hasChildren(['remainingSeconds', 'isBreak', 'isPaused', 'lastUpdate', 'currentCycle'])"
+        },
+        "settings": {
+          ".validate": "newData.hasChildren(['workMinutes', 'breakMinutes']) && newData.child('workMinutes').isNumber() && newData.child('workMinutes').val() >= 1 && newData.child('workMinutes').val() <= 60 && newData.child('breakMinutes').isNumber() && newData.child('breakMinutes').val() >= 1 && newData.child('breakMinutes').val() <= 30"
+        }
+      }
+    }
+  }
+}
