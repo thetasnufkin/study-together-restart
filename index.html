@@ -8,11 +8,12 @@
   <link rel="stylesheet" href="style.css">
 
   <script defer src="/__/firebase/10.7.1/firebase-app-compat.js"></script>
+  <script defer src="/__/firebase/10.7.1/firebase-auth-compat.js"></script>
   <script defer src="/__/firebase/10.7.1/firebase-database-compat.js"></script>
   <script defer src="/__/firebase/init.js"></script>
 
   <script defer src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <script defer src="script.js?v=20260213-1"></script>
+  <script defer src="script.js?v=20260213-2"></script>
 </head>
 <body>
   <button class="settings-toggle" onclick="toggleSettings()" title="設定">設定</button>
@@ -29,6 +30,16 @@
         <span id="connectionText">Firebase に接続中...</span>
       </div>
 
+      <div class="auth-card">
+        <h3>参加モード</h3>
+        <p id="authStatusText">ゲスト</p>
+        <div class="auth-actions">
+          <button class="btn btn-secondary" id="guestModeBtn" onclick="continueAsGuest()">ゲストで参加</button>
+          <button class="btn btn-primary" id="googleSignInBtn" onclick="signInWithGoogle()">Googleでログイン</button>
+          <button class="btn btn-secondary" id="googleSignOutBtn" onclick="signOutAccount()" style="display:none;">ログアウト</button>
+        </div>
+      </div>
+
       <div class="input-group">
         <label>ニックネーム</label>
         <input type="text" id="nickname" placeholder="例: たろう" maxlength="10">
@@ -42,6 +53,10 @@
     </div>
 
     <div class="main-screen" id="mainScreen">
+      <div class="account-banner">
+        <span id="accountBannerText">ゲスト参加中</span>
+      </div>
+
       <div class="timer-container">
         <span class="status-badge status-work" id="statusBadge">作業中</span>
 
@@ -90,6 +105,20 @@
       <div class="participants">
         <h3>参加者 (<span id="participantCount">0</span>人)</h3>
         <div class="participant-list" id="participantList"></div>
+      </div>
+
+      <div class="mypage-card">
+        <h3>マイページ</h3>
+        <p class="mypage-note">Googleログイン時のみ履歴が保存されます。参加者の「プロフィール」から他の人の履歴も見られます。</p>
+        <div class="mypage-actions">
+          <button class="btn btn-secondary" onclick="loadMyProfile()">自分の履歴を表示</button>
+          <div class="profile-search">
+            <input type="text" id="profileUidInput" placeholder="UIDを入力して表示">
+            <button class="btn btn-secondary" onclick="loadProfileByUid()">表示</button>
+          </div>
+        </div>
+        <div class="profile-summary" id="profileSummary">プロフィール未選択</div>
+        <div class="profile-history" id="profileHistory"></div>
       </div>
 
       <div class="room-info">

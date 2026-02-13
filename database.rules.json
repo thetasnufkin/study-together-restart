@@ -16,6 +16,18 @@
           ".validate": "newData.hasChildren(['workMinutes', 'breakMinutes']) && newData.child('workMinutes').isNumber() && newData.child('workMinutes').val() >= 1 && newData.child('workMinutes').val() <= 60 && newData.child('breakMinutes').isNumber() && newData.child('breakMinutes').val() >= 1 && newData.child('breakMinutes').val() <= 30"
         }
       }
+    },
+    "users": {
+      "$uid": {
+        ".read": true,
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "publicUsers": {
+      ".read": true,
+      "$uid": {
+        ".write": "auth != null && auth.uid === $uid"
+      }
     }
   }
 }

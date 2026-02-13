@@ -127,6 +127,29 @@ body {
   display: block;
 }
 
+.auth-card {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.auth-card h3 {
+  font-size: 0.95rem;
+  margin-bottom: 8px;
+}
+
+.auth-card p {
+  color: #ccd6f6;
+  font-size: 0.85rem;
+  margin-bottom: 10px;
+}
+
+.auth-actions {
+  display: grid;
+  gap: 8px;
+}
+
 .input-group {
   margin-bottom: 20px;
 }
@@ -348,6 +371,16 @@ body {
   margin-bottom: 15px;
 }
 
+.account-banner {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 10px 14px;
+  text-align: center;
+  color: #ccd6f6;
+  font-size: 0.85rem;
+  margin-top: 20px;
+}
+
 .participant-list {
   display: flex;
   flex-wrap: wrap;
@@ -362,6 +395,16 @@ body {
   padding: 8px 14px;
   border-radius: 20px;
   font-size: 0.9rem;
+}
+
+.profile-link {
+  border: 1px solid rgba(100, 255, 218, 0.4);
+  background: transparent;
+  color: #64ffda;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  cursor: pointer;
 }
 
 .participant.speaking {
@@ -478,6 +521,70 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.mypage-card {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 16px;
+  padding: 20px;
+  margin-top: 20px;
+}
+
+.mypage-card h3 {
+  font-size: 0.95rem;
+  margin-bottom: 8px;
+}
+
+.mypage-note {
+  color: #8892b0;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  margin-bottom: 12px;
+}
+
+.mypage-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.profile-search {
+  display: grid;
+  gap: 8px;
+}
+
+.profile-search input {
+  width: 100%;
+  padding: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  color: #fff;
+}
+
+.profile-summary {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #ccd6f6;
+  line-height: 1.5;
+  font-size: 0.85rem;
+}
+
+.profile-history {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.history-item {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.82rem;
+  color: #ccd6f6;
 }
 
 .room-code {

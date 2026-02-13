@@ -7,7 +7,8 @@ Firebase Hosting でそのまま公開できる構成にしています。
 
 1. Firebase Console でプロジェクトを作成
 2. Realtime Database を作成 (ロケーションは任意)
-3. Firebase CLI をインストール
+3. Authentication で Google プロバイダを有効化
+4. Firebase CLI をインストール
 
 ```bash
 npm install -g firebase-tools
@@ -24,7 +25,12 @@ firebase login
 firebase deploy --only database
 ```
 
-## 4. Hostingにデプロイ
+## 4. Authentication設定
+
+Firebase Console の Authentication > Sign-in method で Google を有効化してください。
+必要であれば承認済みドメインに Hosting のドメインを追加します。
+
+## 5. Hostingにデプロイ
 
 ```bash
 firebase deploy --only hosting
