@@ -411,6 +411,28 @@ body {
   color: #fff;
 }
 
+.template-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.template-btn {
+  width: auto;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #e9efff;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.template-btn:hover {
+  border-color: rgba(100, 255, 218, 0.5);
+  color: #64ffda;
+}
+
 .task-hint {
   font-size: 0.78rem;
   color: #8892b0;
@@ -612,11 +634,9 @@ body {
   margin-top: 10px;
   display: grid;
   gap: 8px;
-  max-height: 46vh;
-  overflow-y: auto;
-  overflow-x: hidden;
-  -webkit-overflow-scrolling: touch;
-  padding-right: 4px;
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
 }
 
 .history-item {
@@ -667,7 +687,8 @@ body {
   max-height: 80vh;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   background: #1a1a2e;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 16px;

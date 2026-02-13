@@ -37,6 +37,12 @@ let state = {
   viewingProfileActivities: [],
   viewingProfileDates: [],
   viewingProfileDateIndex: 0,
+  viewingProfileProfile: null,
+  viewingProfileStats: null,
+  profileSubscriptions: [],
+  lastProcessedSkipToken: null,
+  skipCompleteToken: 0,
+  isPhaseSwitching: false,
 };
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -51,6 +57,22 @@ window.addEventListener("DOMContentLoaded", () => {
     if (e.key === "Enter") setCurrentTask();
   });
 });
+
+function chooseTemplate(template) {
+  const input = document.getElementById("taskInput");
+  if (!input) return;
+
+  const picked = (template || "").trim();
+  if (!picked) return;
+
+  const current = input.value.trim();
+  if (!current) {
+    input.value = picked;
+    return;
+  }
+  if (current.includes(picked)) return;
+  input.value = `${picked} / ${current}`;
+}
 
 async function initApp() {
   updateConnectionStatus("connecting", "Firebase に接続中...");
@@ -183,6 +205,24 @@ function getDateKey(ts = Date.now()) {
   return `${y}-${m}-${day}`;
 }
 
+function toFiniteNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function getActivityDateKey(activity) {
+  const startedAt = toFiniteNumber(activity && activity.startedAt, 0);
+  if (startedAt > 0) return getDateKey(startedAt);
+
+  const rawDate = typeof (activity && activity.date) === "string" ? activity.date.trim() : "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) return rawDate;
+
+  const endedAt = toFiniteNumber(activity && activity.endedAt, 0);
+  if (endedAt > 0) return getDateKey(endedAt);
+
+  return getDateKey();
+}
+
 function showNotification(message, isError = false) {
   const el = document.getElementById("notification");
   el.textContent = message;
@@ -287,12 +327,27 @@ function syncHostTimerToDb() {
     isBreak: state.isBreak,
     isPaused: state.isPaused,
     currentCycle: state.currentCycle,
+    skipCompleteToken: state.skipCompleteToken || 0,
     lastUpdate: firebase.database.ServerValue.TIMESTAMP,
   });
 }
 
 function isWorkTimingActive() {
   return !!state.roomRef && !state.isBreak && !state.isPaused;
+}
+
+function applySkipCompletionCredit(timer) {
+  const token = toFiniteNumber(timer && timer.skipCompleteToken, 0);
+  if (!token || token === state.lastProcessedSkipToken) return;
+
+  const fullSeconds = Math.max(0, CONFIG.WORK_MINUTES * 60);
+  const bonus = Math.max(0, fullSeconds - state.currentSessionSeconds);
+  if (bonus > 0) {
+    state.pendingWorkSeconds += bonus;
+    state.currentSessionSeconds += bonus;
+    if (state.activeTaskStartedAt) state.activeTaskStartedAt -= bonus * 1000;
+  }
+  state.lastProcessedSkipToken = token;
 }
 
 function startWorkAccumulator() {
@@ -518,6 +573,7 @@ function setupFirebaseListeners() {
 
     const wasActive = isWorkTimingActive();
     const prevBreak = state.isBreak;
+    const transitionToBreak = !prevBreak && !!timer.isBreak;
     state.remainingSeconds = timer.remainingSeconds;
     state.isPaused = !!timer.isPaused;
     state.currentCycle = timer.currentCycle || 0;
@@ -525,7 +581,10 @@ function setupFirebaseListeners() {
 
     const nowActive = isWorkTimingActive();
     if (!wasActive && nowActive) startOrResumeTaskSegment(Date.now());
-    if (wasActive && !nowActive) await closeActiveTaskSegment(Date.now());
+    if (wasActive && !nowActive) {
+      if (transitionToBreak) applySkipCompletionCredit(timer);
+      await closeActiveTaskSegment(Date.now());
+    }
 
     updateTimerDisplay();
     updateCycleIndicator();
@@ -553,22 +612,53 @@ function startHostTimer() {
   state.hostTimerInterval = setInterval(() => {
     if (state.isPaused || !state.isHost || !state.roomRef) return;
     state.remainingSeconds -= 1;
-    if (state.remainingSeconds <= 0) return switchPhase();
+    if (state.remainingSeconds <= 0) {
+      switchPhase({ completeAsFullPomodoro: false }).catch((err) => console.error(err));
+      return;
+    }
     syncHostTimerToDb();
   }, 1000);
 }
 
-function switchPhase() {
-  state.isBreak = !state.isBreak;
-  state.remainingSeconds = state.isBreak ? CONFIG.BREAK_MINUTES * 60 : CONFIG.WORK_MINUTES * 60;
-  if (!state.isBreak) state.currentCycle = (state.currentCycle + 1) % 4;
-  updateTimerDisplay();
-  updateCycleIndicator();
-  updateCallUI();
-  if (state.isBreak) startCall();
-  else endCall();
-  syncHostTimerToDb();
-  updateHostControls();
+async function switchPhase({ completeAsFullPomodoro = false } = {}) {
+  if (state.isPhaseSwitching) return;
+  state.isPhaseSwitching = true;
+
+  try {
+    const goingToBreak = !state.isBreak;
+    if (goingToBreak) {
+      if (completeAsFullPomodoro) {
+        const fullSeconds = Math.max(0, CONFIG.WORK_MINUTES * 60);
+        const bonus = Math.max(0, fullSeconds - state.currentSessionSeconds);
+        if (bonus > 0) {
+          state.pendingWorkSeconds += bonus;
+          state.currentSessionSeconds += bonus;
+          if (state.activeTaskStartedAt) state.activeTaskStartedAt -= bonus * 1000;
+        }
+        state.skipCompleteToken = Date.now();
+      } else {
+        state.skipCompleteToken = 0;
+      }
+      await closeActiveTaskSegment(Date.now());
+      await flushWorkProgress({ finalizeSession: true });
+    }
+
+    state.isBreak = !state.isBreak;
+    state.remainingSeconds = state.isBreak ? CONFIG.BREAK_MINUTES * 60 : CONFIG.WORK_MINUTES * 60;
+    if (!state.isBreak) {
+      state.currentCycle = (state.currentCycle + 1) % 4;
+      state.skipCompleteToken = 0;
+    }
+    updateTimerDisplay();
+    updateCycleIndicator();
+    updateCallUI();
+    if (state.isBreak) startCall();
+    else endCall();
+    syncHostTimerToDb();
+    updateHostControls();
+  } finally {
+    state.isPhaseSwitching = false;
+  }
 }
 
 async function toggleHostTimer() {
@@ -587,11 +677,7 @@ async function toggleHostTimer() {
 
 async function skipToBreak() {
   if (!state.isHost || !state.roomRef) return;
-  if (!state.isBreak) {
-    await closeActiveTaskSegment(Date.now());
-    await flushWorkProgress({ finalizeSession: true });
-  }
-  switchPhase();
+  await switchPhase({ completeAsFullPomodoro: !state.isBreak });
   showNotification(state.isBreak ? "休憩へスキップしました" : "作業へスキップしました");
 }
 
@@ -765,7 +851,20 @@ function openProfileModal(title = "マイページ") {
 }
 
 function closeProfileModal() {
+  clearProfileSubscriptions();
   document.getElementById("profileModal").classList.remove("active");
+}
+
+function clearProfileSubscriptions() {
+  if (!state.profileSubscriptions || !state.profileSubscriptions.length) return;
+  state.profileSubscriptions.forEach((off) => {
+    try {
+      off();
+    } catch (_err) {
+      // noop
+    }
+  });
+  state.profileSubscriptions = [];
 }
 
 async function loadMyProfile() {
@@ -781,24 +880,73 @@ async function viewParticipantProfile(uid) {
 
 async function loadProfile(uid) {
   try {
-    const profileSnap = await state.database.ref(`users/${uid}/profile`).once("value");
-    const statsSnap = await state.database.ref(`users/${uid}/stats`).once("value");
-    const activitiesSnap = await state.database.ref(`users/${uid}/activities`).limitToLast(300).once("value");
-
-    const profile = profileSnap.val();
-    const stats = statsSnap.val() || { totalWorkSeconds: 0, totalSessions: 0 };
-    const activities = [];
-    activitiesSnap.forEach((child) => activities.push(child.val()));
-    activities.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
-
+    clearProfileSubscriptions();
     state.viewingProfileUid = uid;
-    state.viewingProfileActivities = activities;
-    state.viewingProfileDates = Array.from(
-      new Set(activities.map((a) => a.date || getDateKey(a.startedAt || Date.now())))
-    ).sort().reverse();
+    state.viewingProfileActivities = [];
+    state.viewingProfileDates = [];
     state.viewingProfileDateIndex = 0;
+    state.viewingProfileProfile = {};
+    state.viewingProfileStats = { totalWorkSeconds: 0, totalSessions: 0 };
 
-    renderProfileSummary(profile, stats);
+    const rerenderProfile = () => {
+      const activities = state.viewingProfileActivities || [];
+      const selectedDate = state.viewingProfileDates[state.viewingProfileDateIndex] || null;
+      const nextDates = Array.from(
+        new Set(activities.map((a) => getActivityDateKey(a)))
+      ).sort().reverse();
+      let nextIndex = 0;
+      if (selectedDate) {
+        const found = nextDates.indexOf(selectedDate);
+        if (found >= 0) nextIndex = found;
+      }
+      state.viewingProfileDates = nextDates;
+      state.viewingProfileDateIndex = nextIndex;
+      renderProfileSummary(state.viewingProfileProfile, state.viewingProfileStats);
+      renderProfileDateHeader();
+      renderProfileActivitiesByDate();
+    };
+
+    const profileRef = state.database.ref(`users/${uid}/profile`);
+    const statsRef = state.database.ref(`users/${uid}/stats`);
+    const activitiesRef = state.database.ref(`users/${uid}/activities`);
+
+    const onProfile = (snapshot) => {
+      if (state.viewingProfileUid !== uid) return;
+      state.viewingProfileProfile = snapshot.val() || {};
+      rerenderProfile();
+    };
+    const onStats = (snapshot) => {
+      if (state.viewingProfileUid !== uid) return;
+      state.viewingProfileStats = snapshot.val() || { totalWorkSeconds: 0, totalSessions: 0 };
+      rerenderProfile();
+    };
+    const onActivities = (snapshot) => {
+      if (state.viewingProfileUid !== uid) return;
+      const activities = [];
+      snapshot.forEach((child) => {
+        const raw = child.val() || {};
+        activities.push({
+          ...raw,
+          startedAt: toFiniteNumber(raw.startedAt, 0),
+          endedAt: toFiniteNumber(raw.endedAt, 0),
+          seconds: toFiniteNumber(raw.seconds, 0),
+          _id: child.key,
+        });
+      });
+      activities.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+      state.viewingProfileActivities = activities.slice(0, 1000);
+      rerenderProfile();
+    };
+
+    profileRef.on("value", onProfile);
+    statsRef.on("value", onStats);
+    activitiesRef.on("value", onActivities);
+
+    state.profileSubscriptions.push(() => profileRef.off("value", onProfile));
+    state.profileSubscriptions.push(() => statsRef.off("value", onStats));
+    state.profileSubscriptions.push(() => activitiesRef.off("value", onActivities));
+
+    renderProfileSummary(state.viewingProfileProfile, state.viewingProfileStats);
     renderProfileDateHeader();
     renderProfileActivitiesByDate();
   } catch (err) {
@@ -807,14 +955,17 @@ async function loadProfile(uid) {
   }
 }
 
-function renderProfileSummary(profile, stats) {
+function renderProfileSummary(profile, stats, visibleCount = null) {
   const displayName = profile && profile.displayName ? profile.displayName : "(未設定)";
   const totalHours = ((stats.totalWorkSeconds || 0) / 3600).toFixed(1);
   const totalSessions = stats.totalSessions || 0;
+  const visibleLine = visibleCount === null ? "" : `<br>表示日の履歴件数: ${visibleCount} 件`;
+  const totalLoaded = state.viewingProfileActivities ? state.viewingProfileActivities.length : 0;
   document.getElementById("profileSummary").innerHTML = `
     <strong>${escapeHtml(displayName)}</strong><br>
     合計作業時間: ${totalHours} 時間<br>
     セッション回数: ${totalSessions} 回
+    ${visibleLine}<br>読み込み履歴総数: ${totalLoaded} 件
   `;
 }
 
@@ -848,14 +999,31 @@ function moveProfileDate(direction) {
 function renderProfileActivitiesByDate() {
   const historyEl = document.getElementById("profileHistory");
   if (!state.viewingProfileDates.length) {
+    renderProfileSummary(
+      state.viewingProfileProfile || {},
+      state.viewingProfileStats || { totalWorkSeconds: 0, totalSessions: 0 },
+      0
+    );
     historyEl.innerHTML = "<div class=\"history-item\">活動履歴はまだありません</div>";
     return;
   }
 
   const date = state.viewingProfileDates[state.viewingProfileDateIndex];
   const items = state.viewingProfileActivities
-    .filter((a) => (a.date || getDateKey(a.startedAt || Date.now())) === date)
-    .sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+    .filter((a) => getActivityDateKey(a) === date)
+    .sort((a, b) => {
+      const t = (a.startedAt || 0) - (b.startedAt || 0);
+      if (t !== 0) return t;
+      const e = (a.endedAt || 0) - (b.endedAt || 0);
+      if (e !== 0) return e;
+      return String(a._id || "").localeCompare(String(b._id || ""));
+    });
+
+  renderProfileSummary(
+    state.viewingProfileProfile || {},
+    state.viewingProfileStats || { totalWorkSeconds: 0, totalSessions: 0 },
+    items.length
+  );
 
   if (!items.length) {
     historyEl.innerHTML = "<div class=\"history-item\">この日の活動はありません</div>";
@@ -896,7 +1064,7 @@ async function setCurrentTask() {
 }
 
 function startOrResumeTaskSegment(nowTs) {
-  if (!state.authUser || !isWorkTimingActive() || !state.currentTask) return;
+  if (!state.authUser || !isWorkTimingActive()) return;
   if (!state.activeTaskStartedAt) state.activeTaskStartedAt = nowTs;
 }
 
@@ -906,20 +1074,20 @@ async function closeActiveTaskSegment(nowTs, forcedUid = null) {
     state.activeTaskStartedAt = null;
     return;
   }
-  if (!state.activeTaskStartedAt || !state.currentTask) {
+  if (!state.activeTaskStartedAt) {
     state.activeTaskStartedAt = null;
     return;
   }
 
   const start = state.activeTaskStartedAt;
   const end = Math.max(nowTs, start + 1000);
-  const seconds = Math.floor((end - start) / 1000);
+  const seconds = Math.max(1, Math.floor((end - start) / 1000));
   state.activeTaskStartedAt = null;
-  if (seconds <= 0) return;
+  const task = (state.currentTask || "").trim() || "タスク未設定";
 
   const activityRef = state.database.ref(`users/${uid}/activities`).push();
   await activityRef.set({
-    task: state.currentTask,
+    task,
     date: getDateKey(start),
     startedAt: start,
     endedAt: end,
