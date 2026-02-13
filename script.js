@@ -34,10 +34,12 @@ let state = {
 
 window.addEventListener("DOMContentLoaded", () => {
   initApp();
+
   document.getElementById("settingsModal").addEventListener("click", (e) => {
-    if (e.target.id === "settingsModal") {
-      toggleSettings();
-    }
+    if (e.target.id === "settingsModal") toggleSettings();
+  });
+  document.getElementById("profileModal").addEventListener("click", (e) => {
+    if (e.target.id === "profileModal") closeProfileModal();
   });
 });
 
@@ -79,8 +81,6 @@ function bindAuthState() {
     }
     if (user) {
       await ensureUserProfile(user);
-      document.getElementById("profileUidInput").value = user.uid;
-      loadMyProfile();
     }
   });
 }
@@ -116,7 +116,7 @@ function updateAuthUi() {
 
   if (authStatusText) {
     authStatusText.textContent = isLoggedIn
-      ? `Googleログイン中: ${state.authUser.displayName || state.authUser.email || state.authUser.uid}`
+      ? `Googleログイン中: ${state.authUser.displayName || state.authUser.email || "アカウント"}`
       : "ゲスト";
   }
 
@@ -200,8 +200,10 @@ function updateConnectionStatus(status, text) {
 
 function updateTimerDisplay() {
   document.getElementById("timerDisplay").textContent = formatTime(state.remainingSeconds);
+
   const totalSeconds = state.isBreak ? CONFIG.BREAK_MINUTES * 60 : CONFIG.WORK_MINUTES * 60;
   const progress = totalSeconds > 0 ? state.remainingSeconds / totalSeconds : 0;
+
   const circumference = 2 * Math.PI * 130;
   const offset = circumference * (1 - progress);
 
@@ -212,7 +214,6 @@ function updateTimerDisplay() {
   const badge = document.getElementById("statusBadge");
   badge.textContent = state.isBreak ? "休憩中" : "作業中";
   badge.className = `status-badge ${state.isBreak ? "status-break" : "status-work"}`;
-
   document.getElementById("timerLabel").textContent = state.isBreak ? "休憩タイム" : "作業タイム";
 }
 
@@ -237,7 +238,6 @@ function updateParticipantList() {
     div.className = "participant";
     div.id = `participant-${pId}`;
     const isOnline = data.lastSeen && Date.now() - data.lastSeen < 15000;
-
     const profileBtn = data.authUid
       ? `<button class="profile-link" onclick="viewParticipantProfile('${data.authUid}')">プロフィール</button>`
       : "";
@@ -271,7 +271,9 @@ function updateHostControls() {
   if (!state.isHost) return;
 
   document.getElementById("hostStartStopBtn").textContent = state.isPaused ? "開始" : "停止";
-  document.getElementById("hostSkipBtn").disabled = state.isBreak;
+  const skipBtn = document.getElementById("hostSkipBtn");
+  skipBtn.disabled = false;
+  skipBtn.textContent = state.isBreak ? "作業へスキップ" : "休憩へスキップ";
 }
 
 function syncHostTimerToDb() {
@@ -303,10 +305,9 @@ function startWorkAccumulator() {
 }
 
 function stopWorkAccumulator() {
-  if (state.workAccumInterval) {
-    clearInterval(state.workAccumInterval);
-    state.workAccumInterval = null;
-  }
+  if (!state.workAccumInterval) return;
+  clearInterval(state.workAccumInterval);
+  state.workAccumInterval = null;
 }
 
 async function flushWorkProgress(options = {}) {
@@ -506,15 +507,12 @@ async function initializeRoom() {
     lastSeen: firebase.database.ServerValue.TIMESTAMP,
     peerId: state.odId,
     authUid: state.authUser ? state.authUser.uid : "",
-    accountName: state.authUser ? getDisplayNameForProfile() : "",
   });
   participantRef.onDisconnect().remove();
 
   if (state.heartbeatInterval) clearInterval(state.heartbeatInterval);
   state.heartbeatInterval = setInterval(() => {
-    if (state.roomRef) {
-      participantRef.update({ lastSeen: firebase.database.ServerValue.TIMESTAMP });
-    }
+    if (state.roomRef) participantRef.update({ lastSeen: firebase.database.ServerValue.TIMESTAMP });
   }, 5000);
 
   await initializePeer();
@@ -522,9 +520,7 @@ async function initializeRoom() {
   showMainScreen();
   startWorkAccumulator();
 
-  if (state.isHost) {
-    startHostTimer();
-  }
+  if (state.isHost) startHostTimer();
 
   showNotification(state.isHost ? `ルーム ${state.roomId} を作成しました` : `ルーム ${state.roomId} に参加しました`);
   const newUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${state.roomId}`;
@@ -580,7 +576,6 @@ function startHostTimer() {
   if (state.hostTimerInterval) clearInterval(state.hostTimerInterval);
   state.hostTimerInterval = setInterval(() => {
     if (state.isPaused || !state.isHost || !state.roomRef) return;
-
     state.remainingSeconds -= 1;
     if (state.remainingSeconds <= 0) {
       switchPhase();
@@ -593,6 +588,7 @@ function startHostTimer() {
 function switchPhase() {
   state.isBreak = !state.isBreak;
   state.remainingSeconds = state.isBreak ? CONFIG.BREAK_MINUTES * 60 : CONFIG.WORK_MINUTES * 60;
+
   if (!state.isBreak) {
     state.currentCycle = (state.currentCycle + 1) % 4;
   }
@@ -626,22 +622,12 @@ async function toggleHostTimer() {
 
 async function skipToBreak() {
   if (!state.isHost || !state.roomRef) return;
-  if (state.isBreak) {
-    showNotification("すでに休憩中です");
-    return;
-  }
 
-  await flushWorkProgress({ finalizeSession: true });
-  state.isBreak = true;
-  state.remainingSeconds = CONFIG.BREAK_MINUTES * 60;
-  state.isPaused = false;
-  updateTimerDisplay();
-  updateCycleIndicator();
-  updateCallUI();
-  startCall();
-  syncHostTimerToDb();
-  updateHostControls();
-  showNotification("休憩へスキップしました");
+  if (!state.isBreak) {
+    await flushWorkProgress({ finalizeSession: true });
+  }
+  switchPhase();
+  showNotification(state.isBreak ? "休憩へスキップしました" : "作業へスキップしました");
 }
 
 async function initializePeer() {
@@ -654,9 +640,7 @@ async function initializePeer() {
         handleStream(call);
       }
     });
-    state.peer.on("error", (err) => {
-      console.error("Peer error:", err);
-    });
+    state.peer.on("error", (err) => console.error("Peer error:", err));
   });
 }
 
@@ -717,6 +701,7 @@ function endCall() {
     state.localStream.getTracks().forEach((track) => track.stop());
     state.localStream = null;
   }
+
   state.connections.forEach((call) => call.close());
   state.connections.clear();
   document.querySelectorAll("audio").forEach((el) => el.remove());
@@ -741,11 +726,10 @@ function toggleMute() {
 }
 
 function setMute(muted) {
-  if (state.localStream) {
-    state.localStream.getAudioTracks().forEach((track) => {
-      track.enabled = !muted;
-    });
-  }
+  if (!state.localStream) return;
+  state.localStream.getAudioTracks().forEach((track) => {
+    track.enabled = !muted;
+  });
 }
 
 function setupAudioVisualizer(stream) {
@@ -767,8 +751,7 @@ function setupAudioVisualizer(stream) {
     state.analyser.getByteFrequencyData(dataArray);
     bars.forEach((bar, index) => {
       const value = dataArray[index + 2] || 0;
-      const height = Math.max(4, value / 4);
-      bar.style.height = `${height}px`;
+      bar.style.height = `${Math.max(4, value / 4)}px`;
     });
   }
   renderFrame();
@@ -776,13 +759,17 @@ function setupAudioVisualizer(stream) {
 
 function copyRoomCode() {
   if (!state.roomId) return;
-  navigator.clipboard.writeText(state.roomId).then(() => showNotification("ルームIDをコピーしました"));
+  navigator.clipboard.writeText(state.roomId).then(() => {
+    showNotification("ルームIDをコピーしました");
+  });
 }
 
 async function leaveRoom() {
   await flushWorkProgress({ finalizeSession: true });
   stopWorkAccumulator();
+  closeProfileModal();
   endCall();
+
   if (state.hostTimerInterval) clearInterval(state.hostTimerInterval);
   if (state.heartbeatInterval) clearInterval(state.heartbeatInterval);
 
@@ -809,7 +796,6 @@ function toggleSettings() {
 function saveSettings() {
   const work = parseInt(document.getElementById("workMinutes").value, 10);
   const brk = parseInt(document.getElementById("breakMinutes").value, 10);
-
   if (!(work > 0 && brk > 0)) {
     showNotification("時間設定が不正です", true);
     return;
@@ -829,25 +815,26 @@ function saveSettings() {
   toggleSettings();
 }
 
+function openProfileModal(title = "マイページ") {
+  document.getElementById("profileModalTitle").textContent = title;
+  document.getElementById("profileModal").classList.add("active");
+}
+
+function closeProfileModal() {
+  document.getElementById("profileModal").classList.remove("active");
+}
+
 async function loadMyProfile() {
   if (!state.authUser) {
-    showNotification("Googleログインすると自分の履歴を保存・表示できます", true);
+    showNotification("Googleログインすると履歴を保存・表示できます", true);
     return;
   }
+  openProfileModal("マイページ");
   await loadProfile(state.authUser.uid);
 }
 
-async function loadProfileByUid() {
-  const uid = document.getElementById("profileUidInput").value.trim();
-  if (!uid) {
-    showNotification("UIDを入力してください", true);
-    return;
-  }
-  await loadProfile(uid);
-}
-
 async function viewParticipantProfile(uid) {
-  document.getElementById("profileUidInput").value = uid;
+  openProfileModal("プロフィール");
   await loadProfile(uid);
 }
 
@@ -863,21 +850,20 @@ async function loadProfile(uid) {
     sessionsSnap.forEach((child) => sessions.push(child.val()));
     sessions.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
-    renderProfile(uid, profile, stats, sessions);
+    renderProfile(profile, stats, sessions);
   } catch (err) {
     console.error("loadProfile error:", err);
     showNotification("プロフィール取得に失敗しました", true);
   }
 }
 
-function renderProfile(uid, profile, stats, sessions) {
+function renderProfile(profile, stats, sessions) {
   const displayName = profile && profile.displayName ? profile.displayName : "(未設定)";
   const totalHours = ((stats.totalWorkSeconds || 0) / 3600).toFixed(1);
   const totalSessions = stats.totalSessions || 0;
 
   document.getElementById("profileSummary").innerHTML = `
     <strong>${displayName}</strong><br>
-    UID: ${uid}<br>
     合計作業時間: ${totalHours} 時間<br>
     セッション回数: ${totalSessions} 回
   `;

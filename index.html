@@ -13,7 +13,7 @@
   <script defer src="/__/firebase/init.js"></script>
 
   <script defer src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <script defer src="script.js?v=20260213-2"></script>
+  <script defer src="script.js?v=20260213-3"></script>
 </head>
 <body>
   <button class="settings-toggle" onclick="toggleSettings()" title="設定">設定</button>
@@ -55,6 +55,9 @@
     <div class="main-screen" id="mainScreen">
       <div class="account-banner">
         <span id="accountBannerText">ゲスト参加中</span>
+      </div>
+      <div class="top-actions">
+        <button class="btn btn-secondary" onclick="loadMyProfile()">マイページ</button>
       </div>
 
       <div class="timer-container">
@@ -107,20 +110,6 @@
         <div class="participant-list" id="participantList"></div>
       </div>
 
-      <div class="mypage-card">
-        <h3>マイページ</h3>
-        <p class="mypage-note">Googleログイン時のみ履歴が保存されます。参加者の「プロフィール」から他の人の履歴も見られます。</p>
-        <div class="mypage-actions">
-          <button class="btn btn-secondary" onclick="loadMyProfile()">自分の履歴を表示</button>
-          <div class="profile-search">
-            <input type="text" id="profileUidInput" placeholder="UIDを入力して表示">
-            <button class="btn btn-secondary" onclick="loadProfileByUid()">表示</button>
-          </div>
-        </div>
-        <div class="profile-summary" id="profileSummary">プロフィール未選択</div>
-        <div class="profile-history" id="profileHistory"></div>
-      </div>
-
       <div class="room-info">
         <div>
           <small style="color: #8892b0;">ルームID</small><br>
@@ -136,6 +125,18 @@
         </div>
         <button class="btn btn-danger" onclick="leaveRoom()">退出</button>
       </div>
+    </div>
+  </div>
+
+  <div class="profile-modal" id="profileModal">
+    <div class="profile-modal-content">
+      <div class="profile-modal-header">
+        <h2 id="profileModalTitle">マイページ</h2>
+        <button class="close-modal-btn" onclick="closeProfileModal()">閉じる</button>
+      </div>
+      <p class="mypage-note">Googleログイン時のみ履歴が保存されます。参加者の「プロフィール」から他の人の履歴も見られます。</p>
+      <div class="profile-summary" id="profileSummary">プロフィール未選択</div>
+      <div class="profile-history" id="profileHistory"></div>
     </div>
   </div>
 

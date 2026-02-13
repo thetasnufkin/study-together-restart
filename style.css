@@ -381,6 +381,10 @@ body {
   margin-top: 20px;
 }
 
+.top-actions {
+  margin-top: 12px;
+}
+
 .participant-list {
   display: flex;
   flex-wrap: wrap;
@@ -523,18 +527,6 @@ body {
   align-items: center;
 }
 
-.mypage-card {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 16px;
-  padding: 20px;
-  margin-top: 20px;
-}
-
-.mypage-card h3 {
-  font-size: 0.95rem;
-  margin-bottom: 8px;
-}
-
 .mypage-note {
   color: #8892b0;
   font-size: 0.8rem;
@@ -585,6 +577,46 @@ body {
   padding: 10px 12px;
   font-size: 0.82rem;
   color: #ccd6f6;
+}
+
+.profile-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+
+.profile-modal.active {
+  display: flex;
+}
+
+.profile-modal-content {
+  width: min(560px, 92vw);
+  max-height: 80vh;
+  overflow: auto;
+  background: #1a1a2e;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 18px;
+}
+
+.profile-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.close-modal-btn {
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: transparent;
+  color: #ccd6f6;
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
 }
 
 .room-code {
