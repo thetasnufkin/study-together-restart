@@ -2,6 +2,7 @@ let CONFIG = {
   WORK_MINUTES: 20,
   BREAK_MINUTES: 5,
 };
+const RECONNECT_SESSION_KEY = "studyTogether.reconnect.v1";
 
 let state = {
   odId: null,
@@ -25,8 +26,15 @@ let state = {
   authUser: null,
   roomRef: null,
   participantRef: null,
+  connectedRef: null,
+  connectedRefHandler: null,
   heartbeatInterval: null,
   hostTimerInterval: null,
+  displayTimerInterval: null,
+  hostLastTickAt: 0,
+  workAccumLastTickAt: 0,
+  timerAnchorRemainingSeconds: CONFIG.WORK_MINUTES * 60,
+  timerAnchorLastUpdateAt: 0,
   workAccumInterval: null,
   pendingWorkSeconds: 0,
   currentSessionSeconds: 0,
@@ -39,6 +47,7 @@ let state = {
   viewingProfileDateIndex: 0,
   viewingProfileProfile: null,
   viewingProfileStats: null,
+  viewingProfileActivityMap: new Map(),
   profileSubscriptions: [],
   lastProcessedSkipToken: null,
   skipCompleteToken: 0,
@@ -93,12 +102,58 @@ async function initApp() {
   state.auth = firebase.auth();
   bindAuthState();
 
+  const params = new URLSearchParams(window.location.search);
+  const roomId = (params.get("room") || "").toUpperCase();
+  if (roomId) document.getElementById("roomId").value = roomId;
+
+  if (roomId) {
+    const rejoined = await tryAutoReconnect(roomId);
+    if (rejoined) {
+      updateConnectionStatus("connected", "Firebase 接続済み");
+      return;
+    }
+  }
+
   updateConnectionStatus("connected", "Firebase 接続済み");
   setJoinButtonsDisabled(false);
+}
 
-  const params = new URLSearchParams(window.location.search);
-  const roomId = params.get("room");
-  if (roomId) document.getElementById("roomId").value = roomId.toUpperCase();
+async function tryAutoReconnect(roomId) {
+  const saved = readReconnectSession();
+  if (!saved) return false;
+  if ((saved.roomId || "").toUpperCase() !== roomId) return false;
+  const nickname = String(saved.nickname || "").trim().slice(0, 10);
+  if (!nickname) return false;
+
+  try {
+    const roomSnap = await state.database.ref(`rooms/${roomId}`).once("value");
+    if (!roomSnap.exists()) {
+      clearReconnectSession();
+      return false;
+    }
+
+    let shouldHost = !!saved.isHost;
+    const room = roomSnap.val() || {};
+    const currentHostId = room.hostId || "";
+    if (shouldHost && saved.peerId && currentHostId && currentHostId !== saved.peerId) {
+      shouldHost = false;
+    }
+
+    state.nickname = nickname;
+    state.roomId = roomId;
+    state.odId = generateId(10);
+    state.isHost = shouldHost;
+    state.currentTask = "";
+    state.activeTaskStartedAt = null;
+
+    document.getElementById("nickname").value = nickname;
+    await initializeRoom({ rejoin: true });
+    showNotification("ルームに再接続しました");
+    return true;
+  } catch (err) {
+    console.error("auto reconnect failed:", err);
+    return false;
+  }
 }
 
 function bindAuthState() {
@@ -106,6 +161,13 @@ function bindAuthState() {
     const previousUid = state.authUser ? state.authUser.uid : null;
     state.authUser = user || null;
     updateAuthUi();
+    if (state.participantRef) {
+      try {
+        await upsertParticipantPresence();
+      } catch (err) {
+        console.error("presence sync on auth failed:", err);
+      }
+    }
 
     if (previousUid && !user) {
       await closeActiveTaskSegment(Date.now(), previousUid);
@@ -203,6 +265,97 @@ function getDateKey(ts = Date.now()) {
   const m = `${d.getMonth() + 1}`.padStart(2, "0");
   const day = `${d.getDate()}`.padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+function readReconnectSession() {
+  try {
+    const raw = sessionStorage.getItem(RECONNECT_SESSION_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || typeof data !== "object") return null;
+    return data;
+  } catch (_err) {
+    return null;
+  }
+}
+
+function writeReconnectSession() {
+  if (!state.roomId || !state.nickname) return;
+  const payload = {
+    roomId: state.roomId,
+    nickname: state.nickname,
+    isHost: !!state.isHost,
+    peerId: state.odId || "",
+    updatedAt: Date.now(),
+  };
+  sessionStorage.setItem(RECONNECT_SESSION_KEY, JSON.stringify(payload));
+}
+
+function clearReconnectSession() {
+  sessionStorage.removeItem(RECONNECT_SESSION_KEY);
+}
+
+function setTimerAnchorFromSnapshot(timer) {
+  state.timerAnchorRemainingSeconds = Math.max(0, toFiniteNumber(timer && timer.remainingSeconds, state.remainingSeconds));
+  const lastUpdate = toFiniteNumber(timer && timer.lastUpdate, Date.now());
+  state.timerAnchorLastUpdateAt = lastUpdate > 0 ? lastUpdate : Date.now();
+}
+
+function getAnchoredRemainingSeconds(nowTs = Date.now()) {
+  if (state.isPaused) return Math.max(0, Math.floor(state.timerAnchorRemainingSeconds));
+  const elapsedSec = Math.max(0, Math.floor((nowTs - state.timerAnchorLastUpdateAt) / 1000));
+  return Math.max(0, Math.floor(state.timerAnchorRemainingSeconds) - elapsedSec);
+}
+
+function refreshTimerFromAnchor() {
+  state.remainingSeconds = getAnchoredRemainingSeconds(Date.now());
+  updateTimerDisplay();
+}
+
+function startDisplayTimerLoop() {
+  if (state.displayTimerInterval) clearInterval(state.displayTimerInterval);
+  state.displayTimerInterval = setInterval(() => {
+    if (!state.roomRef) return;
+    refreshTimerFromAnchor();
+  }, 1000);
+}
+
+function stopDisplayTimerLoop() {
+  if (!state.displayTimerInterval) return;
+  clearInterval(state.displayTimerInterval);
+  state.displayTimerInterval = null;
+}
+
+function detachPresenceListener() {
+  if (state.connectedRef && state.connectedRefHandler) {
+    state.connectedRef.off("value", state.connectedRefHandler);
+  }
+  state.connectedRef = null;
+  state.connectedRefHandler = null;
+}
+
+async function upsertParticipantPresence() {
+  if (!state.participantRef) return;
+  await state.participantRef.set({
+    nickname: state.nickname,
+    joinedAt: firebase.database.ServerValue.TIMESTAMP,
+    lastSeen: firebase.database.ServerValue.TIMESTAMP,
+    peerId: state.odId,
+    authUid: state.authUser ? state.authUser.uid : "",
+    currentTask: state.currentTask || "",
+  });
+}
+
+function attachPresenceListener() {
+  if (!state.database || !state.participantRef) return;
+  detachPresenceListener();
+  state.connectedRef = state.database.ref(".info/connected");
+  state.connectedRefHandler = (snap) => {
+    if (!snap.val() || !state.participantRef) return;
+    state.participantRef.onDisconnect().remove();
+    upsertParticipantPresence().catch((err) => console.error("presence set failed:", err));
+  };
+  state.connectedRef.on("value", state.connectedRefHandler);
 }
 
 function toFiniteNumber(value, fallback = 0) {
@@ -352,11 +505,21 @@ function applySkipCompletionCredit(timer) {
 
 function startWorkAccumulator() {
   if (state.workAccumInterval) clearInterval(state.workAccumInterval);
+  state.workAccumLastTickAt = Date.now();
   state.workAccumInterval = setInterval(() => {
+    const now = Date.now();
+    const elapsedSec = Math.max(0, Math.floor((now - state.workAccumLastTickAt) / 1000));
+    if (elapsedSec <= 0) return;
+    state.workAccumLastTickAt += elapsedSec * 1000;
+
     if (!state.authUser || !isWorkTimingActive()) return;
-    state.pendingWorkSeconds += 1;
-    state.currentSessionSeconds += 1;
-    if (state.pendingWorkSeconds % 30 === 0) flushWorkProgress({ finalizeSession: false });
+
+    const before = state.pendingWorkSeconds;
+    state.pendingWorkSeconds += elapsedSec;
+    state.currentSessionSeconds += elapsedSec;
+    if (Math.floor(before / 30) !== Math.floor(state.pendingWorkSeconds / 30)) {
+      flushWorkProgress({ finalizeSession: false });
+    }
   }, 1000);
 }
 
@@ -364,6 +527,7 @@ function stopWorkAccumulator() {
   if (!state.workAccumInterval) return;
   clearInterval(state.workAccumInterval);
   state.workAccumInterval = null;
+  state.workAccumLastTickAt = 0;
 }
 
 async function flushWorkProgress(options = {}) {
@@ -484,9 +648,16 @@ async function createRoom() {
   state.isBreak = false;
   state.currentCycle = 0;
   state.remainingSeconds = CONFIG.WORK_MINUTES * 60;
+  state.timerAnchorRemainingSeconds = state.remainingSeconds;
+  state.timerAnchorLastUpdateAt = Date.now();
   state.currentTask = "";
   state.activeTaskStartedAt = null;
-  await initializeRoom();
+  try {
+    await initializeRoom({ rejoin: false });
+  } catch (err) {
+    console.error(err);
+    showNotification("ルーム作成に失敗しました", true);
+  }
 }
 
 async function joinRoom() {
@@ -505,12 +676,27 @@ async function joinRoom() {
   state.isHost = false;
   state.currentTask = "";
   state.activeTaskStartedAt = null;
-  await initializeRoom();
+  try {
+    await initializeRoom({ rejoin: false });
+  } catch (err) {
+    console.error(err);
+    showNotification("ルーム参加に失敗しました", true);
+  }
 }
 
-async function initializeRoom() {
+async function initializeRoom({ rejoin = false } = {}) {
   state.roomRef = state.database.ref(`rooms/${state.roomId}`);
-  if (state.isHost) {
+  const existingRoomSnap = await state.roomRef.once("value");
+  const existingRoom = existingRoomSnap.val() || {};
+  const existingSettings = existingRoom.settings || {};
+  const existingTimer = existingRoom.timer || {};
+
+  if (existingSettings.workMinutes && existingSettings.breakMinutes) {
+    CONFIG.WORK_MINUTES = existingSettings.workMinutes;
+    CONFIG.BREAK_MINUTES = existingSettings.breakMinutes;
+  }
+
+  if (state.isHost && !rejoin) {
     await state.roomRef.set({
       createdAt: firebase.database.ServerValue.TIMESTAMP,
       hostId: state.odId,
@@ -520,16 +706,29 @@ async function initializeRoom() {
         isPaused: true,
         lastUpdate: firebase.database.ServerValue.TIMESTAMP,
         currentCycle: 0,
+        skipCompleteToken: 0,
       },
       settings: { workMinutes: CONFIG.WORK_MINUTES, breakMinutes: CONFIG.BREAK_MINUTES },
     });
+  } else if (state.isHost && rejoin) {
+    if (!existingRoomSnap.exists()) throw new Error("Room no longer exists");
+    await state.roomRef.update({ hostId: state.odId });
+  } else if (!existingRoomSnap.exists()) {
+    throw new Error("Room no longer exists");
+  }
+
+  if (existingRoomSnap.exists()) {
+    state.remainingSeconds = Math.max(0, toFiniteNumber(existingTimer.remainingSeconds, state.remainingSeconds));
+    state.isBreak = !!existingTimer.isBreak;
+    state.isPaused = !!existingTimer.isPaused;
+    state.currentCycle = Math.max(0, toFiniteNumber(existingTimer.currentCycle, state.currentCycle || 0));
+    state.skipCompleteToken = toFiniteNumber(existingTimer.skipCompleteToken, 0);
+    setTimerAnchorFromSnapshot(existingTimer);
   } else {
-    const settingsSnap = await state.roomRef.child("settings").once("value");
-    const settings = settingsSnap.val();
-    if (settings) {
-      CONFIG.WORK_MINUTES = settings.workMinutes;
-      CONFIG.BREAK_MINUTES = settings.breakMinutes;
-    }
+    setTimerAnchorFromSnapshot({
+      remainingSeconds: state.remainingSeconds,
+      lastUpdate: Date.now(),
+    });
   }
 
   state.participantRef = state.roomRef.child(`participants/${state.odId}`);
@@ -542,17 +741,23 @@ async function initializeRoom() {
     currentTask: "",
   });
   state.participantRef.onDisconnect().remove();
+  attachPresenceListener();
 
   if (state.heartbeatInterval) clearInterval(state.heartbeatInterval);
   state.heartbeatInterval = setInterval(() => {
-    if (state.roomRef) state.participantRef.update({ lastSeen: firebase.database.ServerValue.TIMESTAMP });
+    if (!state.roomRef || !state.participantRef) return;
+    state.participantRef
+      .update({ lastSeen: firebase.database.ServerValue.TIMESTAMP })
+      .catch(() => upsertParticipantPresence().catch((err) => console.error("presence heartbeat recover failed:", err)));
   }, 5000);
 
   await initializePeer();
   setupFirebaseListeners();
   showMainScreen();
+  startDisplayTimerLoop();
   startWorkAccumulator();
   if (state.isHost) startHostTimer();
+  writeReconnectSession();
 
   const newUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${state.roomId}`;
   window.history.pushState({ path: newUrl }, "", newUrl);
@@ -574,10 +779,12 @@ function setupFirebaseListeners() {
     const wasActive = isWorkTimingActive();
     const prevBreak = state.isBreak;
     const transitionToBreak = !prevBreak && !!timer.isBreak;
-    state.remainingSeconds = timer.remainingSeconds;
     state.isPaused = !!timer.isPaused;
-    state.currentCycle = timer.currentCycle || 0;
+    state.currentCycle = Math.max(0, toFiniteNumber(timer.currentCycle, 0));
     state.isBreak = !!timer.isBreak;
+    state.skipCompleteToken = toFiniteNumber(timer.skipCompleteToken, 0);
+    setTimerAnchorFromSnapshot(timer);
+    refreshTimerFromAnchor();
 
     const nowActive = isWorkTimingActive();
     if (!wasActive && nowActive) startOrResumeTaskSegment(Date.now());
@@ -586,7 +793,6 @@ function setupFirebaseListeners() {
       await closeActiveTaskSegment(Date.now());
     }
 
-    updateTimerDisplay();
     updateCycleIndicator();
     updateCallUI();
     updateHostControls();
@@ -609,15 +815,32 @@ function setupFirebaseListeners() {
 
 function startHostTimer() {
   if (state.hostTimerInterval) clearInterval(state.hostTimerInterval);
+  state.hostLastTickAt = Date.now();
   state.hostTimerInterval = setInterval(() => {
-    if (state.isPaused || !state.isHost || !state.roomRef) return;
-    state.remainingSeconds -= 1;
+    if (!state.isHost || !state.roomRef) return;
+    const now = Date.now();
+    if (state.isPaused) {
+      state.hostLastTickAt = now;
+      return;
+    }
+
+    const elapsedSec = Math.max(0, Math.floor((now - state.hostLastTickAt) / 1000));
+    if (elapsedSec <= 0) return;
+    state.hostLastTickAt += elapsedSec * 1000;
+
+    state.remainingSeconds = Math.max(0, state.remainingSeconds - elapsedSec);
+    setTimerAnchorFromSnapshot({
+      remainingSeconds: state.remainingSeconds,
+      lastUpdate: now,
+    });
+    refreshTimerFromAnchor();
     if (state.remainingSeconds <= 0) {
+      syncHostTimerToDb();
       switchPhase({ completeAsFullPomodoro: false }).catch((err) => console.error(err));
       return;
     }
     syncHostTimerToDb();
-  }, 1000);
+  }, 500);
 }
 
 async function switchPhase({ completeAsFullPomodoro = false } = {}) {
@@ -645,11 +868,16 @@ async function switchPhase({ completeAsFullPomodoro = false } = {}) {
 
     state.isBreak = !state.isBreak;
     state.remainingSeconds = state.isBreak ? CONFIG.BREAK_MINUTES * 60 : CONFIG.WORK_MINUTES * 60;
+    state.hostLastTickAt = Date.now();
     if (!state.isBreak) {
       state.currentCycle = (state.currentCycle + 1) % 4;
       state.skipCompleteToken = 0;
     }
-    updateTimerDisplay();
+    setTimerAnchorFromSnapshot({
+      remainingSeconds: state.remainingSeconds,
+      lastUpdate: Date.now(),
+    });
+    refreshTimerFromAnchor();
     updateCycleIndicator();
     updateCallUI();
     if (state.isBreak) startCall();
@@ -668,8 +896,14 @@ async function toggleHostTimer() {
     await closeActiveTaskSegment(Date.now());
     await flushWorkProgress({ finalizeSession: true });
   } else {
+    state.hostLastTickAt = Date.now();
     startOrResumeTaskSegment(Date.now());
   }
+  setTimerAnchorFromSnapshot({
+    remainingSeconds: state.remainingSeconds,
+    lastUpdate: Date.now(),
+  });
+  refreshTimerFromAnchor();
   syncHostTimerToDb();
   updateHostControls();
   showNotification(state.isPaused ? "タイマーを停止しました" : "タイマーを開始しました");
@@ -685,10 +919,15 @@ async function initializePeer() {
   return new Promise((resolve) => {
     state.peer = new Peer(state.odId, { debug: 1 });
     state.peer.on("open", () => resolve());
-    state.peer.on("call", (call) => {
-      if (state.isBreak && state.localStream) {
+    state.peer.on("call", async (call) => {
+      if (!state.isBreak) return;
+      try {
+        if (!state.localStream) await startCall();
+        if (!state.localStream) return;
         call.answer(state.localStream);
         handleStream(call);
+      } catch (err) {
+        console.error("Failed to answer call:", err);
       }
     });
     state.peer.on("error", (err) => console.error("Peer error:", err));
@@ -807,13 +1046,16 @@ function copyRoomCode() {
 }
 
 async function leaveRoom() {
+  clearReconnectSession();
   await closeActiveTaskSegment(Date.now());
   await flushWorkProgress({ finalizeSession: true });
   stopWorkAccumulator();
+  stopDisplayTimerLoop();
   closeProfileModal();
   endCall();
   if (state.hostTimerInterval) clearInterval(state.hostTimerInterval);
   if (state.heartbeatInterval) clearInterval(state.heartbeatInterval);
+  detachPresenceListener();
   try {
     if (state.roomRef && state.odId) await state.roomRef.child(`participants/${state.odId}`).remove();
     if (state.roomRef && state.isHost) await state.roomRef.remove();
@@ -838,10 +1080,14 @@ function saveSettings() {
   if (state.isHost && state.roomRef) {
     state.roomRef.child("settings").update({ workMinutes: work, breakMinutes: brk });
     state.remainingSeconds = state.isBreak ? brk * 60 : work * 60;
+    setTimerAnchorFromSnapshot({
+      remainingSeconds: state.remainingSeconds,
+      lastUpdate: Date.now(),
+    });
     syncHostTimerToDb();
     updateHostControls();
   }
-  updateTimerDisplay();
+  refreshTimerFromAnchor();
   toggleSettings();
 }
 
@@ -856,7 +1102,10 @@ function closeProfileModal() {
 }
 
 function clearProfileSubscriptions() {
-  if (!state.profileSubscriptions || !state.profileSubscriptions.length) return;
+  if (!state.profileSubscriptions || !state.profileSubscriptions.length) {
+    state.viewingProfileActivityMap = new Map();
+    return;
+  }
   state.profileSubscriptions.forEach((off) => {
     try {
       off();
@@ -865,6 +1114,7 @@ function clearProfileSubscriptions() {
     }
   });
   state.profileSubscriptions = [];
+  state.viewingProfileActivityMap = new Map();
 }
 
 async function loadMyProfile() {
@@ -887,6 +1137,7 @@ async function loadProfile(uid) {
     state.viewingProfileDateIndex = 0;
     state.viewingProfileProfile = {};
     state.viewingProfileStats = { totalWorkSeconds: 0, totalSessions: 0 };
+    state.viewingProfileActivityMap = new Map();
 
     const rerenderProfile = () => {
       const activities = state.viewingProfileActivities || [];
@@ -920,31 +1171,41 @@ async function loadProfile(uid) {
       state.viewingProfileStats = snapshot.val() || { totalWorkSeconds: 0, totalSessions: 0 };
       rerenderProfile();
     };
-    const onActivities = (snapshot) => {
-      if (state.viewingProfileUid !== uid) return;
-      const activities = [];
-      snapshot.forEach((child) => {
-        const raw = child.val() || {};
-        activities.push({
-          ...raw,
-          startedAt: toFiniteNumber(raw.startedAt, 0),
-          endedAt: toFiniteNumber(raw.endedAt, 0),
-          seconds: toFiniteNumber(raw.seconds, 0),
-          _id: child.key,
-        });
-      });
+    const updateActivitiesFromMap = () => {
+      const activities = Array.from(state.viewingProfileActivityMap.values());
       activities.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
       state.viewingProfileActivities = activities.slice(0, 1000);
       rerenderProfile();
     };
+    const upsertActivity = (snapshot) => {
+      if (state.viewingProfileUid !== uid) return;
+      const raw = snapshot.val() || {};
+      state.viewingProfileActivityMap.set(snapshot.key, {
+        ...raw,
+        startedAt: toFiniteNumber(raw.startedAt, 0),
+        endedAt: toFiniteNumber(raw.endedAt, 0),
+        seconds: toFiniteNumber(raw.seconds, 0),
+        _id: snapshot.key,
+      });
+      updateActivitiesFromMap();
+    };
+    const removeActivity = (snapshot) => {
+      if (state.viewingProfileUid !== uid) return;
+      state.viewingProfileActivityMap.delete(snapshot.key);
+      updateActivitiesFromMap();
+    };
 
     profileRef.on("value", onProfile);
     statsRef.on("value", onStats);
-    activitiesRef.on("value", onActivities);
+    activitiesRef.on("child_added", upsertActivity);
+    activitiesRef.on("child_changed", upsertActivity);
+    activitiesRef.on("child_removed", removeActivity);
 
     state.profileSubscriptions.push(() => profileRef.off("value", onProfile));
     state.profileSubscriptions.push(() => statsRef.off("value", onStats));
-    state.profileSubscriptions.push(() => activitiesRef.off("value", onActivities));
+    state.profileSubscriptions.push(() => activitiesRef.off("child_added", upsertActivity));
+    state.profileSubscriptions.push(() => activitiesRef.off("child_changed", upsertActivity));
+    state.profileSubscriptions.push(() => activitiesRef.off("child_removed", removeActivity));
 
     renderProfileSummary(state.viewingProfileProfile, state.viewingProfileStats);
     renderProfileDateHeader();
@@ -1053,7 +1314,11 @@ async function setCurrentTask() {
   const prevTask = state.currentTask;
   state.currentTask = nextTask;
 
-  if (state.participantRef) await state.participantRef.update({ currentTask: nextTask });
+  if (state.participantRef) {
+    await state.participantRef
+      .update({ currentTask: nextTask })
+      .catch(() => upsertParticipantPresence().catch((err) => console.error("presence task sync failed:", err)));
+  }
 
   const now = Date.now();
   if (prevTask !== nextTask && isWorkTimingActive()) {
