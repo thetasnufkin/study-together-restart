@@ -24,22 +24,31 @@ let state = {
   auth: null,
   authUser: null,
   roomRef: null,
+  participantRef: null,
   heartbeatInterval: null,
   hostTimerInterval: null,
   workAccumInterval: null,
   pendingWorkSeconds: 0,
   currentSessionSeconds: 0,
   flushWorkPromise: Promise.resolve(),
+  currentTask: "",
+  activeTaskStartedAt: null,
+  viewingProfileUid: null,
+  viewingProfileActivities: [],
+  viewingProfileDates: [],
+  viewingProfileDateIndex: 0,
 };
 
 window.addEventListener("DOMContentLoaded", () => {
   initApp();
-
   document.getElementById("settingsModal").addEventListener("click", (e) => {
     if (e.target.id === "settingsModal") toggleSettings();
   });
   document.getElementById("profileModal").addEventListener("click", (e) => {
     if (e.target.id === "profileModal") closeProfileModal();
+  });
+  document.getElementById("taskInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") setCurrentTask();
   });
 });
 
@@ -47,6 +56,8 @@ async function initApp() {
   updateConnectionStatus("connecting", "Firebase に接続中...");
   setJoinButtonsDisabled(true);
   updateAuthUi();
+  updateCycleIndicator();
+  updateTimerDisplay();
 
   const ready = await waitForFirebaseApp(8000);
   if (!ready) {
@@ -64,10 +75,8 @@ async function initApp() {
   setJoinButtonsDisabled(false);
 
   const params = new URLSearchParams(window.location.search);
-  const roomIdFromUrl = params.get("room");
-  if (roomIdFromUrl) {
-    document.getElementById("roomId").value = roomIdFromUrl.toUpperCase();
-  }
+  const roomId = params.get("room");
+  if (roomId) document.getElementById("roomId").value = roomId.toUpperCase();
 }
 
 function bindAuthState() {
@@ -77,11 +86,10 @@ function bindAuthState() {
     updateAuthUi();
 
     if (previousUid && !user) {
+      await closeActiveTaskSegment(Date.now(), previousUid);
       await flushWorkProgress({ finalizeSession: true, forcedUid: previousUid });
     }
-    if (user) {
-      await ensureUserProfile(user);
-    }
+    if (user) await ensureUserProfile(user);
   });
 }
 
@@ -109,25 +117,14 @@ function setJoinButtonsDisabled(disabled) {
 
 function updateAuthUi() {
   const isLoggedIn = !!state.authUser;
-  const authStatusText = document.getElementById("authStatusText");
-  const accountBannerText = document.getElementById("accountBannerText");
-  const signInBtn = document.getElementById("googleSignInBtn");
-  const signOutBtn = document.getElementById("googleSignOutBtn");
-
-  if (authStatusText) {
-    authStatusText.textContent = isLoggedIn
-      ? `Googleログイン中: ${state.authUser.displayName || state.authUser.email || "アカウント"}`
-      : "ゲスト";
-  }
-
-  if (accountBannerText) {
-    accountBannerText.textContent = isLoggedIn
-      ? "Googleアカウントで参加中 (作業履歴を保存)"
-      : "ゲスト参加中 (履歴は保存されません)";
-  }
-
-  if (signInBtn) signInBtn.style.display = isLoggedIn ? "none" : "block";
-  if (signOutBtn) signOutBtn.style.display = isLoggedIn ? "block" : "none";
+  document.getElementById("authStatusText").textContent = isLoggedIn
+    ? `Googleログイン中: ${state.authUser.displayName || state.authUser.email || "アカウント"}`
+    : "ゲスト";
+  document.getElementById("accountBannerText").textContent = isLoggedIn
+    ? "Googleアカウントで参加中 (作業履歴を保存)"
+    : "ゲスト参加中 (履歴は保存されません)";
+  document.getElementById("googleSignInBtn").style.display = isLoggedIn ? "none" : "block";
+  document.getElementById("googleSignOutBtn").style.display = isLoggedIn ? "block" : "none";
 }
 
 async function signInWithGoogle() {
@@ -137,7 +134,7 @@ async function signInWithGoogle() {
     await state.auth.signInWithPopup(provider);
     showNotification("Googleログインに成功しました");
   } catch (err) {
-    console.error("Google sign-in error:", err);
+    console.error(err);
     showNotification("Googleログインに失敗しました", true);
   }
 }
@@ -145,21 +142,19 @@ async function signInWithGoogle() {
 async function signOutAccount() {
   if (!state.auth || !state.authUser) return;
   try {
+    await closeActiveTaskSegment(Date.now());
     await flushWorkProgress({ finalizeSession: true });
     await state.auth.signOut();
     showNotification("ログアウトしました");
   } catch (err) {
-    console.error("Sign-out error:", err);
+    console.error(err);
     showNotification("ログアウトに失敗しました", true);
   }
 }
 
 async function continueAsGuest() {
-  if (state.auth && state.authUser) {
-    await signOutAccount();
-    return;
-  }
-  showNotification("ゲストモードです");
+  if (state.auth && state.authUser) await signOutAccount();
+  else showNotification("ゲストモードです");
 }
 
 function generateId(length = 6) {
@@ -173,12 +168,19 @@ function formatTime(seconds) {
   return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 }
 
-function getDateKey() {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = `${now.getMonth() + 1}`.padStart(2, "0");
-  const d = `${now.getDate()}`.padStart(2, "0");
-  return `${y}-${m}-${d}`;
+function formatClock(ts) {
+  const d = new Date(ts);
+  const hh = `${d.getHours()}`.padStart(2, "0");
+  const mm = `${d.getMinutes()}`.padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function getDateKey(ts = Date.now()) {
+  const d = new Date(ts);
+  const y = d.getFullYear();
+  const m = `${d.getMonth() + 1}`.padStart(2, "0");
+  const day = `${d.getDate()}`.padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function showNotification(message, isError = false) {
@@ -186,7 +188,7 @@ function showNotification(message, isError = false) {
   el.textContent = message;
   el.classList.toggle("error", isError);
   el.classList.add("show");
-  setTimeout(() => el.classList.remove("show"), 3000);
+  setTimeout(() => el.classList.remove("show"), 2600);
 }
 
 function updateConnectionStatus(status, text) {
@@ -200,17 +202,13 @@ function updateConnectionStatus(status, text) {
 
 function updateTimerDisplay() {
   document.getElementById("timerDisplay").textContent = formatTime(state.remainingSeconds);
-
-  const totalSeconds = state.isBreak ? CONFIG.BREAK_MINUTES * 60 : CONFIG.WORK_MINUTES * 60;
-  const progress = totalSeconds > 0 ? state.remainingSeconds / totalSeconds : 0;
-
+  const total = state.isBreak ? CONFIG.BREAK_MINUTES * 60 : CONFIG.WORK_MINUTES * 60;
+  const progress = total > 0 ? state.remainingSeconds / total : 0;
   const circumference = 2 * Math.PI * 130;
   const offset = circumference * (1 - progress);
-
   const circle = document.getElementById("progressCircle");
   circle.style.strokeDashoffset = offset;
   circle.classList.toggle("work", !state.isBreak);
-
   const badge = document.getElementById("statusBadge");
   badge.textContent = state.isBreak ? "休憩中" : "作業中";
   badge.className = `status-badge ${state.isBreak ? "status-break" : "status-work"}`;
@@ -229,6 +227,15 @@ function updateCycleIndicator() {
   }
 }
 
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 function updateParticipantList() {
   const list = document.getElementById("participantList");
   list.innerHTML = "";
@@ -236,15 +243,13 @@ function updateParticipantList() {
   state.participants.forEach((data, pId) => {
     const div = document.createElement("div");
     div.className = "participant";
-    div.id = `participant-${pId}`;
-    const isOnline = data.lastSeen && Date.now() - data.lastSeen < 15000;
-    const profileBtn = data.authUid
-      ? `<button class="profile-link" onclick="viewParticipantProfile('${data.authUid}')">プロフィール</button>`
-      : "";
-
+    const online = data.lastSeen && Date.now() - data.lastSeen < 15000;
+    const taskPill = data.currentTask ? `<span class="participant-task">${escapeHtml(data.currentTask)}</span>` : "";
+    const profileBtn = data.authUid ? `<button class="profile-link" onclick="viewParticipantProfile('${data.authUid}')">プロフィール</button>` : "";
     div.innerHTML = `
-      <span class="participant-dot ${isOnline ? "" : "offline"}"></span>
-      <span>${data.nickname}${pId === state.odId ? " (あなた)" : ""}</span>
+      <span class="participant-dot ${online ? "" : "offline"}"></span>
+      <span>${escapeHtml(data.nickname || "NoName")}${pId === state.odId ? " (あなた)" : ""}</span>
+      ${taskPill}
       ${profileBtn}
     `;
     list.appendChild(div);
@@ -269,7 +274,6 @@ function updateHostControls() {
   const hostControls = document.getElementById("hostControls");
   hostControls.classList.toggle("active", state.isHost);
   if (!state.isHost) return;
-
   document.getElementById("hostStartStopBtn").textContent = state.isPaused ? "開始" : "停止";
   const skipBtn = document.getElementById("hostSkipBtn");
   skipBtn.disabled = false;
@@ -297,10 +301,7 @@ function startWorkAccumulator() {
     if (!state.authUser || !isWorkTimingActive()) return;
     state.pendingWorkSeconds += 1;
     state.currentSessionSeconds += 1;
-
-    if (state.pendingWorkSeconds % 30 === 0) {
-      flushWorkProgress({ finalizeSession: false });
-    }
+    if (state.pendingWorkSeconds % 30 === 0) flushWorkProgress({ finalizeSession: false });
   }, 1000);
 }
 
@@ -338,14 +339,13 @@ async function doFlushWorkProgress({ finalizeSession = false, forcedUid = null }
     await incrementStats(uid, delta);
     await incrementPublicStats(uid, delta);
   }
-
   if (finalizeSession && sessionSeconds > 0) {
     const sessionRef = state.database.ref(`users/${uid}/sessions`).push();
     await sessionRef.set({
       date: getDateKey(),
       seconds: sessionSeconds,
       roomId: state.roomId || "",
-      nickname: state.nickname || "",
+      task: state.currentTask || "",
       createdAt: firebase.database.ServerValue.TIMESTAMP,
     });
     await incrementSessionCount(uid);
@@ -397,38 +397,29 @@ async function incrementPublicStats(uid, delta) {
 }
 
 function getDisplayNameForProfile() {
-  if (state.authUser) {
-    return state.authUser.displayName || state.authUser.email || state.nickname || "User";
-  }
+  if (state.authUser) return state.authUser.displayName || state.authUser.email || state.nickname || "User";
   return state.nickname || "Guest";
 }
 
 async function ensureUserProfile(user) {
-  const profileData = {
+  const profile = {
     displayName: user.displayName || user.email || state.nickname || "User",
     photoURL: user.photoURL || "",
     email: user.email || "",
     updatedAt: Date.now(),
   };
-  await state.database.ref(`users/${user.uid}/profile`).update(profileData);
+  await state.database.ref(`users/${user.uid}/profile`).update(profile);
   await state.database.ref(`publicUsers/${user.uid}`).update({
-    displayName: profileData.displayName,
-    photoURL: profileData.photoURL,
+    displayName: profile.displayName,
+    photoURL: profile.photoURL,
     updatedAt: Date.now(),
   });
 }
 
 async function createRoom() {
-  if (!state.database) {
-    showNotification("Firebase 接続が完了していません", true);
-    return;
-  }
-
+  if (!state.database) return showNotification("Firebase 接続が完了していません", true);
   const nickname = document.getElementById("nickname").value.trim();
-  if (!nickname) {
-    showNotification("ニックネームを入力してください", true);
-    return;
-  }
+  if (!nickname) return showNotification("ニックネームを入力してください", true);
 
   state.nickname = nickname.slice(0, 10);
   state.roomId = generateId();
@@ -438,43 +429,32 @@ async function createRoom() {
   state.isBreak = false;
   state.currentCycle = 0;
   state.remainingSeconds = CONFIG.WORK_MINUTES * 60;
+  state.currentTask = "";
+  state.activeTaskStartedAt = null;
   await initializeRoom();
 }
 
 async function joinRoom() {
-  if (!state.database) {
-    showNotification("Firebase 接続が完了していません", true);
-    return;
-  }
-
+  if (!state.database) return showNotification("Firebase 接続が完了していません", true);
   const nickname = document.getElementById("nickname").value.trim();
   const roomId = document.getElementById("roomId").value.trim().toUpperCase();
+  if (!nickname) return showNotification("ニックネームを入力してください", true);
+  if (!roomId) return showNotification("ルームIDを入力してください", true);
 
-  if (!nickname) {
-    showNotification("ニックネームを入力してください", true);
-    return;
-  }
-  if (!roomId) {
-    showNotification("ルームIDを入力してください", true);
-    return;
-  }
-
-  const roomSnapshot = await state.database.ref(`rooms/${roomId}`).once("value");
-  if (!roomSnapshot.exists()) {
-    showNotification("ルームが見つかりません", true);
-    return;
-  }
+  const roomSnap = await state.database.ref(`rooms/${roomId}`).once("value");
+  if (!roomSnap.exists()) return showNotification("ルームが見つかりません", true);
 
   state.nickname = nickname.slice(0, 10);
   state.roomId = roomId;
   state.odId = generateId(10);
   state.isHost = false;
+  state.currentTask = "";
+  state.activeTaskStartedAt = null;
   await initializeRoom();
 }
 
 async function initializeRoom() {
   state.roomRef = state.database.ref(`rooms/${state.roomId}`);
-
   if (state.isHost) {
     await state.roomRef.set({
       createdAt: firebase.database.ServerValue.TIMESTAMP,
@@ -486,45 +466,42 @@ async function initializeRoom() {
         lastUpdate: firebase.database.ServerValue.TIMESTAMP,
         currentCycle: 0,
       },
-      settings: {
-        workMinutes: CONFIG.WORK_MINUTES,
-        breakMinutes: CONFIG.BREAK_MINUTES,
-      },
+      settings: { workMinutes: CONFIG.WORK_MINUTES, breakMinutes: CONFIG.BREAK_MINUTES },
     });
   } else {
-    const settingsSnapshot = await state.roomRef.child("settings").once("value");
-    const settings = settingsSnapshot.val();
+    const settingsSnap = await state.roomRef.child("settings").once("value");
+    const settings = settingsSnap.val();
     if (settings) {
       CONFIG.WORK_MINUTES = settings.workMinutes;
       CONFIG.BREAK_MINUTES = settings.breakMinutes;
     }
   }
 
-  const participantRef = state.roomRef.child(`participants/${state.odId}`);
-  await participantRef.set({
+  state.participantRef = state.roomRef.child(`participants/${state.odId}`);
+  await state.participantRef.set({
     nickname: state.nickname,
     joinedAt: firebase.database.ServerValue.TIMESTAMP,
     lastSeen: firebase.database.ServerValue.TIMESTAMP,
     peerId: state.odId,
     authUid: state.authUser ? state.authUser.uid : "",
+    currentTask: "",
   });
-  participantRef.onDisconnect().remove();
+  state.participantRef.onDisconnect().remove();
 
   if (state.heartbeatInterval) clearInterval(state.heartbeatInterval);
   state.heartbeatInterval = setInterval(() => {
-    if (state.roomRef) participantRef.update({ lastSeen: firebase.database.ServerValue.TIMESTAMP });
+    if (state.roomRef) state.participantRef.update({ lastSeen: firebase.database.ServerValue.TIMESTAMP });
   }, 5000);
 
   await initializePeer();
   setupFirebaseListeners();
   showMainScreen();
   startWorkAccumulator();
-
   if (state.isHost) startHostTimer();
 
-  showNotification(state.isHost ? `ルーム ${state.roomId} を作成しました` : `ルーム ${state.roomId} に参加しました`);
   const newUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${state.roomId}`;
   window.history.pushState({ path: newUrl }, "", newUrl);
+  showNotification(state.isHost ? `ルーム ${state.roomId} を作成しました` : `ルーム ${state.roomId} に参加しました`);
 }
 
 function setupFirebaseListeners() {
@@ -539,35 +516,34 @@ function setupFirebaseListeners() {
     const timer = snapshot.val();
     if (!timer) return;
 
-    const previousIsBreak = state.isBreak;
-    const previousPaused = state.isPaused;
-
+    const wasActive = isWorkTimingActive();
+    const prevBreak = state.isBreak;
     state.remainingSeconds = timer.remainingSeconds;
     state.isPaused = !!timer.isPaused;
     state.currentCycle = timer.currentCycle || 0;
     state.isBreak = !!timer.isBreak;
+
+    const nowActive = isWorkTimingActive();
+    if (!wasActive && nowActive) startOrResumeTaskSegment(Date.now());
+    if (wasActive && !nowActive) await closeActiveTaskSegment(Date.now());
 
     updateTimerDisplay();
     updateCycleIndicator();
     updateCallUI();
     updateHostControls();
 
-    if (!previousIsBreak && state.isBreak) {
+    if (!prevBreak && state.isBreak) {
       await flushWorkProgress({ finalizeSession: true });
-      showNotification("休憩タイムです。通話を開始します");
       startCall();
-    } else if (previousIsBreak && !state.isBreak) {
-      showNotification("作業タイムです。通話を終了します");
+    } else if (prevBreak && !state.isBreak) {
       endCall();
-    } else if (!previousPaused && state.isPaused) {
-      await flushWorkProgress({ finalizeSession: true });
     }
   });
 
   state.roomRef.on("value", (snapshot) => {
     if (!snapshot.exists() && state.roomId) {
       showNotification("ルームが終了しました", true);
-      setTimeout(() => leaveRoom(), 2000);
+      setTimeout(() => leaveRoom(), 1800);
     }
   });
 }
@@ -577,10 +553,7 @@ function startHostTimer() {
   state.hostTimerInterval = setInterval(() => {
     if (state.isPaused || !state.isHost || !state.roomRef) return;
     state.remainingSeconds -= 1;
-    if (state.remainingSeconds <= 0) {
-      switchPhase();
-      return;
-    }
+    if (state.remainingSeconds <= 0) return switchPhase();
     syncHostTimerToDb();
   }, 1000);
 }
@@ -588,23 +561,12 @@ function startHostTimer() {
 function switchPhase() {
   state.isBreak = !state.isBreak;
   state.remainingSeconds = state.isBreak ? CONFIG.BREAK_MINUTES * 60 : CONFIG.WORK_MINUTES * 60;
-
-  if (!state.isBreak) {
-    state.currentCycle = (state.currentCycle + 1) % 4;
-  }
-
+  if (!state.isBreak) state.currentCycle = (state.currentCycle + 1) % 4;
   updateTimerDisplay();
   updateCycleIndicator();
   updateCallUI();
-
-  if (state.isBreak) {
-    showNotification("休憩タイムです。通話を開始します");
-    startCall();
-  } else {
-    showNotification("作業タイムです。通話を終了します");
-    endCall();
-  }
-
+  if (state.isBreak) startCall();
+  else endCall();
   syncHostTimerToDb();
   updateHostControls();
 }
@@ -612,18 +574,21 @@ function switchPhase() {
 async function toggleHostTimer() {
   if (!state.isHost || !state.roomRef) return;
   state.isPaused = !state.isPaused;
+  if (state.isPaused) {
+    await closeActiveTaskSegment(Date.now());
+    await flushWorkProgress({ finalizeSession: true });
+  } else {
+    startOrResumeTaskSegment(Date.now());
+  }
   syncHostTimerToDb();
   updateHostControls();
-  if (state.isPaused) {
-    await flushWorkProgress({ finalizeSession: true });
-  }
   showNotification(state.isPaused ? "タイマーを停止しました" : "タイマーを開始しました");
 }
 
 async function skipToBreak() {
   if (!state.isHost || !state.roomRef) return;
-
   if (!state.isBreak) {
+    await closeActiveTaskSegment(Date.now());
     await flushWorkProgress({ finalizeSession: true });
   }
   switchPhase();
@@ -652,9 +617,8 @@ async function startCall() {
     setupAudioVisualizer(stream);
     setMute(state.isMuted);
     connectToNewParticipants();
-    showNotification("マイクが有効になりました");
   } catch (err) {
-    console.error("Mic access error:", err);
+    console.error(err);
     showNotification("マイクへのアクセスに失敗しました", true);
   }
 }
@@ -671,7 +635,6 @@ function connectToNewParticipants() {
 function handleStream(call) {
   const peerId = call.peer;
   state.connections.set(peerId, call);
-
   call.on("stream", (remoteStream) => {
     let audio = document.getElementById(`audio-${peerId}`);
     if (!audio) {
@@ -682,7 +645,6 @@ function handleStream(call) {
     }
     audio.srcObject = remoteStream;
   });
-
   call.on("close", () => cleanupConnection(peerId));
   call.on("error", () => cleanupConnection(peerId));
 }
@@ -701,11 +663,9 @@ function endCall() {
     state.localStream.getTracks().forEach((track) => track.stop());
     state.localStream = null;
   }
-
   state.connections.forEach((call) => call.close());
   state.connections.clear();
   document.querySelectorAll("audio").forEach((el) => el.remove());
-
   if (state.audioContext) {
     state.audioContext.close();
     state.audioContext = null;
@@ -740,18 +700,16 @@ function setupAudioVisualizer(stream) {
   state.analyser = state.audioContext.createAnalyser();
   state.analyser.fftSize = 64;
   src.connect(state.analyser);
-
   const bufferLength = state.analyser.frequencyBinCount;
   const dataArray = new Uint8Array(bufferLength);
   const bars = document.querySelectorAll(".audio-bar");
-
   function renderFrame() {
     if (!state.localStream || !state.audioContext) return;
     requestAnimationFrame(renderFrame);
     state.analyser.getByteFrequencyData(dataArray);
-    bars.forEach((bar, index) => {
-      const value = dataArray[index + 2] || 0;
-      bar.style.height = `${Math.max(4, value / 4)}px`;
+    bars.forEach((bar, idx) => {
+      const v = dataArray[idx + 2] || 0;
+      bar.style.height = `${Math.max(4, v / 4)}px`;
     });
   }
   renderFrame();
@@ -759,31 +717,23 @@ function setupAudioVisualizer(stream) {
 
 function copyRoomCode() {
   if (!state.roomId) return;
-  navigator.clipboard.writeText(state.roomId).then(() => {
-    showNotification("ルームIDをコピーしました");
-  });
+  navigator.clipboard.writeText(state.roomId).then(() => showNotification("ルームIDをコピーしました"));
 }
 
 async function leaveRoom() {
+  await closeActiveTaskSegment(Date.now());
   await flushWorkProgress({ finalizeSession: true });
   stopWorkAccumulator();
   closeProfileModal();
   endCall();
-
   if (state.hostTimerInterval) clearInterval(state.hostTimerInterval);
   if (state.heartbeatInterval) clearInterval(state.heartbeatInterval);
-
   try {
-    if (state.roomRef && state.odId) {
-      await state.roomRef.child(`participants/${state.odId}`).remove();
-    }
-    if (state.roomRef && state.isHost) {
-      await state.roomRef.remove();
-    }
+    if (state.roomRef && state.odId) await state.roomRef.child(`participants/${state.odId}`).remove();
+    if (state.roomRef && state.isHost) await state.roomRef.remove();
   } catch (err) {
-    console.error("Leave room cleanup error:", err);
+    console.error(err);
   }
-
   if (state.peer) state.peer.destroy();
   if (state.roomRef) state.roomRef.off();
   window.location.href = window.location.pathname;
@@ -796,21 +746,15 @@ function toggleSettings() {
 function saveSettings() {
   const work = parseInt(document.getElementById("workMinutes").value, 10);
   const brk = parseInt(document.getElementById("breakMinutes").value, 10);
-  if (!(work > 0 && brk > 0)) {
-    showNotification("時間設定が不正です", true);
-    return;
-  }
-
+  if (!(work > 0 && brk > 0)) return showNotification("時間設定が不正です", true);
   CONFIG.WORK_MINUTES = work;
   CONFIG.BREAK_MINUTES = brk;
-
   if (state.isHost && state.roomRef) {
     state.roomRef.child("settings").update({ workMinutes: work, breakMinutes: brk });
     state.remainingSeconds = state.isBreak ? brk * 60 : work * 60;
     syncHostTimerToDb();
     updateHostControls();
   }
-
   updateTimerDisplay();
   toggleSettings();
 }
@@ -825,10 +769,7 @@ function closeProfileModal() {
 }
 
 async function loadMyProfile() {
-  if (!state.authUser) {
-    showNotification("Googleログインすると履歴を保存・表示できます", true);
-    return;
-  }
+  if (!state.authUser) return showNotification("Googleログインすると履歴を表示できます", true);
   openProfileModal("マイページ");
   await loadProfile(state.authUser.uid);
 }
@@ -842,45 +783,148 @@ async function loadProfile(uid) {
   try {
     const profileSnap = await state.database.ref(`users/${uid}/profile`).once("value");
     const statsSnap = await state.database.ref(`users/${uid}/stats`).once("value");
-    const sessionsSnap = await state.database.ref(`users/${uid}/sessions`).limitToLast(20).once("value");
+    const activitiesSnap = await state.database.ref(`users/${uid}/activities`).limitToLast(300).once("value");
 
     const profile = profileSnap.val();
     const stats = statsSnap.val() || { totalWorkSeconds: 0, totalSessions: 0 };
-    const sessions = [];
-    sessionsSnap.forEach((child) => sessions.push(child.val()));
-    sessions.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    const activities = [];
+    activitiesSnap.forEach((child) => activities.push(child.val()));
+    activities.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
 
-    renderProfile(profile, stats, sessions);
+    state.viewingProfileUid = uid;
+    state.viewingProfileActivities = activities;
+    state.viewingProfileDates = Array.from(
+      new Set(activities.map((a) => a.date || getDateKey(a.startedAt || Date.now())))
+    ).sort().reverse();
+    state.viewingProfileDateIndex = 0;
+
+    renderProfileSummary(profile, stats);
+    renderProfileDateHeader();
+    renderProfileActivitiesByDate();
   } catch (err) {
-    console.error("loadProfile error:", err);
+    console.error(err);
     showNotification("プロフィール取得に失敗しました", true);
   }
 }
 
-function renderProfile(profile, stats, sessions) {
+function renderProfileSummary(profile, stats) {
   const displayName = profile && profile.displayName ? profile.displayName : "(未設定)";
   const totalHours = ((stats.totalWorkSeconds || 0) / 3600).toFixed(1);
   const totalSessions = stats.totalSessions || 0;
-
   document.getElementById("profileSummary").innerHTML = `
-    <strong>${displayName}</strong><br>
+    <strong>${escapeHtml(displayName)}</strong><br>
     合計作業時間: ${totalHours} 時間<br>
     セッション回数: ${totalSessions} 回
   `;
+}
 
-  const historyEl = document.getElementById("profileHistory");
-  if (!sessions.length) {
-    historyEl.innerHTML = "<div class=\"history-item\">履歴はまだありません</div>";
+function renderProfileDateHeader() {
+  const hasDates = state.viewingProfileDates.length > 0;
+  const label = document.getElementById("profileDateLabel");
+  const prevBtn = document.getElementById("profilePrevDateBtn");
+  const nextBtn = document.getElementById("profileNextDateBtn");
+
+  if (!hasDates) {
+    label.textContent = "履歴なし";
+    prevBtn.disabled = true;
+    nextBtn.disabled = true;
     return;
   }
 
-  historyEl.innerHTML = sessions
-    .slice(0, 20)
-    .map((session) => {
-      const date = session.date || "-";
-      const mins = Math.round((session.seconds || 0) / 60);
-      const room = session.roomId || "-";
-      return `<div class="history-item">${date} / ${mins}分 / Room: ${room}</div>`;
+  label.textContent = state.viewingProfileDates[state.viewingProfileDateIndex];
+  prevBtn.disabled = state.viewingProfileDateIndex >= state.viewingProfileDates.length - 1;
+  nextBtn.disabled = state.viewingProfileDateIndex <= 0;
+}
+
+function moveProfileDate(direction) {
+  if (!state.viewingProfileDates.length) return;
+  const next = state.viewingProfileDateIndex - direction;
+  if (next < 0 || next >= state.viewingProfileDates.length) return;
+  state.viewingProfileDateIndex = next;
+  renderProfileDateHeader();
+  renderProfileActivitiesByDate();
+}
+
+function renderProfileActivitiesByDate() {
+  const historyEl = document.getElementById("profileHistory");
+  if (!state.viewingProfileDates.length) {
+    historyEl.innerHTML = "<div class=\"history-item\">活動履歴はまだありません</div>";
+    return;
+  }
+
+  const date = state.viewingProfileDates[state.viewingProfileDateIndex];
+  const items = state.viewingProfileActivities
+    .filter((a) => (a.date || getDateKey(a.startedAt || Date.now())) === date)
+    .sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+
+  if (!items.length) {
+    historyEl.innerHTML = "<div class=\"history-item\">この日の活動はありません</div>";
+    return;
+  }
+
+  historyEl.innerHTML = items
+    .map((act) => {
+      const startedAt = act.startedAt || 0;
+      const endedAt = act.endedAt || 0;
+      const mins = Math.max(1, Math.round((act.seconds || 0) / 60));
+      const task = escapeHtml(act.task || "タスク未設定");
+      return `
+        <div class="history-item timeline-item">
+          <div class="timeline-time">${formatClock(startedAt)} - ${formatClock(endedAt)}</div>
+          <div class="timeline-task">${task}</div>
+          <div class="timeline-duration">${mins}分</div>
+        </div>
+      `;
     })
     .join("");
+}
+
+async function setCurrentTask() {
+  const input = document.getElementById("taskInput");
+  const nextTask = input.value.trim().slice(0, 60);
+  const prevTask = state.currentTask;
+  state.currentTask = nextTask;
+
+  if (state.participantRef) await state.participantRef.update({ currentTask: nextTask });
+
+  const now = Date.now();
+  if (prevTask !== nextTask && isWorkTimingActive()) {
+    await closeActiveTaskSegment(now);
+    startOrResumeTaskSegment(now);
+  }
+  showNotification(nextTask ? "現在タスクを更新しました" : "現在タスクをクリアしました");
+}
+
+function startOrResumeTaskSegment(nowTs) {
+  if (!state.authUser || !isWorkTimingActive() || !state.currentTask) return;
+  if (!state.activeTaskStartedAt) state.activeTaskStartedAt = nowTs;
+}
+
+async function closeActiveTaskSegment(nowTs, forcedUid = null) {
+  const uid = forcedUid || (state.authUser && state.authUser.uid);
+  if (!uid || !state.database) {
+    state.activeTaskStartedAt = null;
+    return;
+  }
+  if (!state.activeTaskStartedAt || !state.currentTask) {
+    state.activeTaskStartedAt = null;
+    return;
+  }
+
+  const start = state.activeTaskStartedAt;
+  const end = Math.max(nowTs, start + 1000);
+  const seconds = Math.floor((end - start) / 1000);
+  state.activeTaskStartedAt = null;
+  if (seconds <= 0) return;
+
+  const activityRef = state.database.ref(`users/${uid}/activities`).push();
+  await activityRef.set({
+    task: state.currentTask,
+    date: getDateKey(start),
+    startedAt: start,
+    endedAt: end,
+    seconds,
+    roomId: state.roomId || "",
+    createdAt: firebase.database.ServerValue.TIMESTAMP,
+  });
 }

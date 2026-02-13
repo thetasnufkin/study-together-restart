@@ -385,6 +385,38 @@ body {
   margin-top: 12px;
 }
 
+.task-card {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 14px;
+  padding: 16px;
+  margin-top: 14px;
+}
+
+.task-card h3 {
+  font-size: 0.95rem;
+  margin-bottom: 10px;
+}
+
+.task-form {
+  display: grid;
+  gap: 8px;
+}
+
+.task-form input {
+  width: 100%;
+  padding: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+}
+
+.task-hint {
+  font-size: 0.78rem;
+  color: #8892b0;
+  margin-top: 8px;
+}
+
 .participant-list {
   display: flex;
   flex-wrap: wrap;
@@ -409,6 +441,19 @@ body {
   padding: 4px 8px;
   font-size: 0.75rem;
   cursor: pointer;
+}
+
+.participant-task {
+  background: rgba(100, 255, 218, 0.14);
+  color: #b8fff1;
+  border: 1px solid rgba(100, 255, 218, 0.25);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .participant.speaking {
@@ -567,8 +612,11 @@ body {
   margin-top: 10px;
   display: grid;
   gap: 8px;
-  max-height: 220px;
-  overflow: auto;
+  max-height: 46vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 4px;
 }
 
 .history-item {
@@ -577,6 +625,27 @@ body {
   padding: 10px 12px;
   font-size: 0.82rem;
   color: #ccd6f6;
+}
+
+.timeline-item {
+  border-left: 3px solid rgba(100, 255, 218, 0.55);
+}
+
+.timeline-time {
+  color: #8892b0;
+  font-size: 0.75rem;
+  margin-bottom: 6px;
+}
+
+.timeline-task {
+  font-size: 0.92rem;
+  color: #e8f9ff;
+}
+
+.timeline-duration {
+  margin-top: 6px;
+  color: #64ffda;
+  font-size: 0.8rem;
 }
 
 .profile-modal {
@@ -596,7 +665,9 @@ body {
 .profile-modal-content {
   width: min(560px, 92vw);
   max-height: 80vh;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: #1a1a2e;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 16px;
@@ -617,6 +688,34 @@ body {
   border-radius: 999px;
   padding: 6px 12px;
   cursor: pointer;
+}
+
+.profile-date-nav {
+  display: grid;
+  grid-template-columns: 40px 1fr 40px;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.date-nav-btn {
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.04);
+  color: #ccd6f6;
+  border-radius: 10px;
+  height: 36px;
+  cursor: pointer;
+}
+
+.date-nav-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.profile-date-label {
+  text-align: center;
+  color: #ccd6f6;
+  font-weight: 600;
 }
 
 .room-code {

@@ -6,14 +6,12 @@
   <title>Study Together - みんなで集中</title>
 
   <link rel="stylesheet" href="style.css">
-
   <script defer src="/__/firebase/10.7.1/firebase-app-compat.js"></script>
   <script defer src="/__/firebase/10.7.1/firebase-auth-compat.js"></script>
   <script defer src="/__/firebase/10.7.1/firebase-database-compat.js"></script>
   <script defer src="/__/firebase/init.js"></script>
-
   <script defer src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <script defer src="script.js?v=20260213-3"></script>
+  <script defer src="script.js?v=20260213-5"></script>
 </head>
 <body>
   <button class="settings-toggle" onclick="toggleSettings()" title="設定">設定</button>
@@ -25,7 +23,7 @@
     </div>
 
     <div class="join-screen active" id="joinScreen">
-      <div class="connection-status" id="connectionStatus">
+      <div class="connection-status">
         <span class="connection-dot" id="connectionDot"></span>
         <span id="connectionText">Firebase に接続中...</span>
       </div>
@@ -42,39 +40,37 @@
 
       <div class="input-group">
         <label>ニックネーム</label>
-        <input type="text" id="nickname" placeholder="例: たろう" maxlength="10">
+        <input type="text" id="nickname" maxlength="10" placeholder="例: たろう">
       </div>
       <div class="input-group">
         <label>ルームID (作成時は入力不要)</label>
-        <input type="text" id="roomId" placeholder="例: ABC123" maxlength="6" style="text-transform: uppercase;">
+        <input type="text" id="roomId" maxlength="6" placeholder="例: ABC123" style="text-transform: uppercase;">
       </div>
-      <button class="btn btn-primary" onclick="joinRoom()" id="joinBtn">参加する</button>
-      <button class="btn btn-secondary" onclick="createRoom()" id="createBtn">新しいルームを作成</button>
+
+      <button class="btn btn-primary" id="joinBtn" onclick="joinRoom()">参加する</button>
+      <button class="btn btn-secondary" id="createBtn" onclick="createRoom()">新しいルームを作成</button>
     </div>
 
     <div class="main-screen" id="mainScreen">
-      <div class="account-banner">
-        <span id="accountBannerText">ゲスト参加中</span>
-      </div>
-      <div class="top-actions">
-        <button class="btn btn-secondary" onclick="loadMyProfile()">マイページ</button>
+      <div class="account-banner"><span id="accountBannerText">ゲスト参加中</span></div>
+      <div class="top-actions"><button class="btn btn-secondary" onclick="loadMyProfile()">マイページ</button></div>
+
+      <div class="task-card">
+        <h3>今やるタスク</h3>
+        <div class="task-form">
+          <input type="text" id="taskInput" maxlength="60" placeholder="例: 数学の問題集 第3章 / 英単語 200語">
+          <button class="btn btn-secondary" onclick="setCurrentTask()">更新</button>
+        </div>
+        <p class="task-hint">このタスクは参加者一覧と活動履歴に表示されます。</p>
       </div>
 
       <div class="timer-container">
         <span class="status-badge status-work" id="statusBadge">作業中</span>
-
-        <div class="cycle-indicator" id="cycleIndicator">
-          <div class="cycle-dot current"></div>
-          <div class="cycle-dot"></div>
-          <div class="cycle-dot"></div>
-          <div class="cycle-dot"></div>
-        </div>
-
+        <div class="cycle-indicator" id="cycleIndicator"></div>
         <div class="progress-ring">
           <svg width="280" height="280">
             <circle class="progress-ring-circle" cx="140" cy="140" r="130"></circle>
-            <circle class="progress-ring-progress work" id="progressCircle" cx="140" cy="140" r="130"
-              stroke-dasharray="816.81" stroke-dashoffset="0"></circle>
+            <circle class="progress-ring-progress work" id="progressCircle" cx="140" cy="140" r="130" stroke-dasharray="816.81" stroke-dashoffset="0"></circle>
           </svg>
           <div class="timer-inner">
             <div class="timer-display" id="timerDisplay">20:00</div>
@@ -91,18 +87,10 @@
           <span>休憩通話中</span>
         </div>
         <div class="audio-visualizer" id="audioVisualizer">
-          <div class="audio-bar"></div>
-          <div class="audio-bar"></div>
-          <div class="audio-bar"></div>
-          <div class="audio-bar"></div>
-          <div class="audio-bar"></div>
-          <div class="audio-bar"></div>
-          <div class="audio-bar"></div>
-          <div class="audio-bar"></div>
+          <div class="audio-bar"></div><div class="audio-bar"></div><div class="audio-bar"></div><div class="audio-bar"></div>
+          <div class="audio-bar"></div><div class="audio-bar"></div><div class="audio-bar"></div><div class="audio-bar"></div>
         </div>
-        <div class="call-buttons">
-          <button class="call-btn" id="muteBtn" onclick="toggleMute()">ミュート</button>
-        </div>
+        <div class="call-buttons"><button class="call-btn" id="muteBtn" onclick="toggleMute()">ミュート</button></div>
       </div>
 
       <div class="participants">
@@ -111,10 +99,7 @@
       </div>
 
       <div class="room-info">
-        <div>
-          <small style="color: #8892b0;">ルームID</small><br>
-          <span class="room-code" id="roomCodeDisplay">-</span>
-        </div>
+        <div><small style="color: #8892b0;">ルームID</small><br><span class="room-code" id="roomCodeDisplay">-</span></div>
         <button class="copy-btn" onclick="copyRoomCode()">コピー</button>
       </div>
 
@@ -134,7 +119,11 @@
         <h2 id="profileModalTitle">マイページ</h2>
         <button class="close-modal-btn" onclick="closeProfileModal()">閉じる</button>
       </div>
-      <p class="mypage-note">Googleログイン時のみ履歴が保存されます。参加者の「プロフィール」から他の人の履歴も見られます。</p>
+      <div class="profile-date-nav">
+        <button class="date-nav-btn" id="profilePrevDateBtn" onclick="moveProfileDate(-1)">◀</button>
+        <div class="profile-date-label" id="profileDateLabel">--</div>
+        <button class="date-nav-btn" id="profileNextDateBtn" onclick="moveProfileDate(1)">▶</button>
+      </div>
       <div class="profile-summary" id="profileSummary">プロフィール未選択</div>
       <div class="profile-history" id="profileHistory"></div>
     </div>
