@@ -53,6 +53,8 @@ let state = {
   lastProcessedSkipToken: null,
   skipCompleteToken: 0,
   isPhaseSwitching: false,
+  hasSeenTimerSnapshot: false,
+  lastObservedTimerBreak: null,
 };
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -397,6 +399,60 @@ function showNotification(message, isError = false) {
   setTimeout(() => el.classList.remove("show"), 2600);
 }
 
+function playPhaseSwitchTone(isBreak) {
+  if (!window.AudioContext && !window.webkitAudioContext) return;
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AudioContextClass();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+
+  osc.type = "sine";
+  osc.frequency.value = isBreak ? 880 : 660;
+  gain.gain.value = 0.0001;
+
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+
+  const now = ctx.currentTime;
+  gain.gain.exponentialRampToValueAtTime(0.07, now + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+  osc.start(now);
+  osc.stop(now + 0.23);
+  osc.onended = () => ctx.close().catch(() => {});
+}
+
+function notifyPhaseSwitch(isBreak) {
+  const message = isBreak ? "作業終了。休憩に入りました" : "休憩終了。作業を再開します";
+  showNotification(message);
+
+  try {
+    playPhaseSwitchTone(isBreak);
+  } catch (_err) {
+    // noop
+  }
+
+  if (
+    typeof Notification !== "undefined" &&
+    Notification.permission === "granted" &&
+    document.visibilityState === "hidden"
+  ) {
+    try {
+      new Notification("Study Together", {
+        body: message,
+        tag: "phase-switch",
+      });
+    } catch (_err) {
+      // noop
+    }
+  }
+}
+
+function maybeEnableBrowserNotifications() {
+  if (typeof Notification === "undefined") return;
+  if (Notification.permission !== "default") return;
+  Notification.requestPermission().catch(() => {});
+}
+
 function updateConnectionStatus(status, text) {
   const dot = document.getElementById("connectionDot");
   const textEl = document.getElementById("connectionText");
@@ -653,6 +709,7 @@ async function createRoom() {
   const nickname = document.getElementById("nickname").value.trim();
   if (!nickname) return showNotification("ニックネームを入力してください", true);
 
+  maybeEnableBrowserNotifications();
   state.nickname = nickname.slice(0, 10);
   state.roomId = generateId();
   state.odId = generateId(10);
@@ -680,6 +737,7 @@ async function joinRoom() {
   if (!nickname) return showNotification("ニックネームを入力してください", true);
   if (!roomId) return showNotification("ルームIDを入力してください", true);
 
+  maybeEnableBrowserNotifications();
   const roomSnap = await state.database.ref(`rooms/${roomId}`).once("value");
   if (!roomSnap.exists()) return showNotification("ルームが見つかりません", true);
 
@@ -769,6 +827,7 @@ async function initializeRoom({ rejoin = false } = {}) {
   showMainScreen();
   startDisplayTimerLoop();
   startWorkAccumulator();
+  if (state.isBreak) startCall();
   if (state.isHost) startHostTimer();
   writeReconnectSession();
 
@@ -780,6 +839,8 @@ async function initializeRoom({ rejoin = false } = {}) {
 function setupFirebaseListeners() {
   clearRoomSubscriptions();
   state.participants.clear();
+  state.hasSeenTimerSnapshot = false;
+  state.lastObservedTimerBreak = null;
   updateParticipantList();
 
   const participantsRef = state.roomRef.child("participants");
@@ -807,13 +868,21 @@ function setupFirebaseListeners() {
   const onTimer = async (snapshot) => {
     const timer = snapshot.val();
     if (!timer) return;
+    const isFirstTimerSnapshot = !state.hasSeenTimerSnapshot;
+    state.hasSeenTimerSnapshot = true;
+
+    const nextIsBreak = !!timer.isBreak;
+    const prevObservedBreak = state.lastObservedTimerBreak;
+    const hasObservedBreak = typeof prevObservedBreak === "boolean";
+    const breakChanged = hasObservedBreak && prevObservedBreak !== nextIsBreak;
+    state.lastObservedTimerBreak = nextIsBreak;
 
     const wasActive = isWorkTimingActive();
-    const prevBreak = state.isBreak;
-    const transitionToBreak = !prevBreak && !!timer.isBreak;
+    const prevBreak = hasObservedBreak ? prevObservedBreak : state.isBreak;
+    const transitionToBreak = breakChanged && nextIsBreak;
     state.isPaused = !!timer.isPaused;
     state.currentCycle = Math.max(0, toFiniteNumber(timer.currentCycle, 0));
-    state.isBreak = !!timer.isBreak;
+    state.isBreak = nextIsBreak;
     state.skipCompleteToken = toFiniteNumber(timer.skipCompleteToken, 0);
     setTimerAnchorFromSnapshot(timer);
     refreshTimerFromAnchor();
@@ -829,11 +898,15 @@ function setupFirebaseListeners() {
     updateCallUI();
     updateHostControls();
 
-    if (!prevBreak && state.isBreak) {
+    if (transitionToBreak) {
       await flushWorkProgress({ finalizeSession: true });
       startCall();
-    } else if (prevBreak && !state.isBreak) {
+    } else if (breakChanged && !state.isBreak) {
       endCall();
+    }
+
+    if (!isFirstTimerSnapshot && breakChanged) {
+      notifyPhaseSwitch(state.isBreak);
     }
   };
   timerRef.on("value", onTimer);
