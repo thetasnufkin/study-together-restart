@@ -913,6 +913,33 @@ body {
   font-size: 1rem;
 }
 
+.setting-row-file {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.setting-controls {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.setting-row input[type="file"] {
+  max-width: 210px;
+  color: #ccd6f6;
+}
+
+.setting-hint {
+  font-size: 0.78rem;
+  color: #9fb2d5;
+  word-break: break-all;
+}
+
+.setting-inline-btn {
+  padding: 8px 12px;
+  font-size: 0.8rem;
+}
+
 .close-settings {
   margin-top: 20px;
 }

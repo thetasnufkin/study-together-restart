@@ -3,6 +3,7 @@ let CONFIG = {
   BREAK_MINUTES: 5,
 };
 const RECONNECT_SESSION_KEY = "studyTogether.reconnect.v1";
+const MAX_SWITCH_SOUND_FILE_SIZE = 2 * 1024 * 1024;
 
 let state = {
   odId: null,
@@ -57,6 +58,9 @@ let state = {
   lastObservedTimerBreak: null,
   callInitInProgress: false,
   lastCallInitAttemptAt: 0,
+  phaseSwitchSoundDataUrl: "",
+  phaseSwitchSoundName: "",
+  phaseSwitchSoundUpdatedBy: "",
 };
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -70,6 +74,11 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("taskInput").addEventListener("keydown", (e) => {
     if (e.key === "Enter") setCurrentTask();
   });
+  const switchSoundFile = document.getElementById("switchSoundFile");
+  if (switchSoundFile) {
+    switchSoundFile.addEventListener("change", onPhaseSwitchSoundFileSelected);
+  }
+  updateSwitchSoundStatus();
 });
 
 function chooseTemplate(template) {
@@ -423,6 +432,121 @@ function showNotification(message, isError = false) {
   setTimeout(() => el.classList.remove("show"), 2600);
 }
 
+function updateSwitchSoundStatus() {
+  const statusEl = document.getElementById("switchSoundStatus");
+  if (!statusEl) return;
+  if (!state.phaseSwitchSoundDataUrl) {
+    statusEl.textContent = "現在: デフォルト音";
+    return;
+  }
+  const updatedBy = state.phaseSwitchSoundUpdatedBy ? ` (${state.phaseSwitchSoundUpdatedBy})` : "";
+  statusEl.textContent = `現在: ${state.phaseSwitchSoundName || "アップロード音"}${updatedBy}`;
+}
+
+function applyRoomSettings(settings) {
+  const nextWork = toFiniteNumber(settings && settings.workMinutes, CONFIG.WORK_MINUTES);
+  const nextBreak = toFiniteNumber(settings && settings.breakMinutes, CONFIG.BREAK_MINUTES);
+  if (nextWork > 0) CONFIG.WORK_MINUTES = nextWork;
+  if (nextBreak > 0) CONFIG.BREAK_MINUTES = nextBreak;
+
+  state.phaseSwitchSoundDataUrl = typeof (settings && settings.switchSoundDataUrl) === "string"
+    ? settings.switchSoundDataUrl
+    : "";
+  state.phaseSwitchSoundName = typeof (settings && settings.switchSoundName) === "string"
+    ? settings.switchSoundName
+    : "";
+  state.phaseSwitchSoundUpdatedBy = typeof (settings && settings.switchSoundUpdatedBy) === "string"
+    ? settings.switchSoundUpdatedBy
+    : "";
+
+  const workInput = document.getElementById("workMinutes");
+  const breakInput = document.getElementById("breakMinutes");
+  if (workInput) workInput.value = String(CONFIG.WORK_MINUTES);
+  if (breakInput) breakInput.value = String(CONFIG.BREAK_MINUTES);
+  updateSwitchSoundStatus();
+  refreshTimerFromAnchor();
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("file read failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function onPhaseSwitchSoundFileSelected(e) {
+  const input = e && e.target;
+  const file = input && input.files && input.files[0];
+  if (!file) return;
+  if (!state.roomRef) {
+    showNotification("ルーム参加後に設定してください", true);
+    input.value = "";
+    return;
+  }
+
+  const lowerName = file.name.toLowerCase();
+  const type = (file.type || "").toLowerCase();
+  const isMp3 = type.includes("mpeg") || lowerName.endsWith(".mp3");
+  const isWav = type.includes("wav") || lowerName.endsWith(".wav");
+  if (!isMp3 && !isWav) {
+    showNotification("mp3 または wav ファイルを選択してください", true);
+    input.value = "";
+    return;
+  }
+  if (file.size > MAX_SWITCH_SOUND_FILE_SIZE) {
+    showNotification("音源サイズは 2MB 以下にしてください", true);
+    input.value = "";
+    return;
+  }
+
+  try {
+    const dataUrl = await readFileAsDataUrl(file);
+    const updater = state.nickname || (state.authUser && (state.authUser.displayName || state.authUser.email)) || "someone";
+    await state.roomRef.child("settings").update({
+      switchSoundDataUrl: dataUrl,
+      switchSoundName: file.name.slice(0, 80),
+      switchSoundUpdatedBy: String(updater).slice(0, 30),
+      switchSoundUpdatedAt: firebase.database.ServerValue.TIMESTAMP,
+    });
+    showNotification("切り替え音を更新しました");
+  } catch (err) {
+    console.error("switch sound upload failed:", err);
+    showNotification("切り替え音の更新に失敗しました", true);
+  } finally {
+    input.value = "";
+  }
+}
+
+async function clearPhaseSwitchSound() {
+  if (!state.roomRef) return showNotification("ルーム参加後に設定してください", true);
+  const updater = state.nickname || (state.authUser && (state.authUser.displayName || state.authUser.email)) || "someone";
+  try {
+    await state.roomRef.child("settings").update({
+      switchSoundDataUrl: "",
+      switchSoundName: "",
+      switchSoundUpdatedBy: String(updater).slice(0, 30),
+      switchSoundUpdatedAt: firebase.database.ServerValue.TIMESTAMP,
+    });
+    showNotification("切り替え音をデフォルトに戻しました");
+  } catch (err) {
+    console.error("clear switch sound failed:", err);
+    showNotification("切り替え音のリセットに失敗しました", true);
+  }
+}
+
+function playCustomPhaseSwitchSound(isBreak) {
+  if (!state.phaseSwitchSoundDataUrl) return false;
+  const audio = new Audio(state.phaseSwitchSoundDataUrl);
+  audio.currentTime = 0;
+  const playPromise = audio.play();
+  if (playPromise && typeof playPromise.catch === "function") {
+    playPromise.catch((_err) => playPhaseSwitchTone(isBreak));
+  }
+  return true;
+}
+
 function playPhaseSwitchTone(isBreak) {
   if (!window.AudioContext && !window.webkitAudioContext) return;
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -450,7 +574,7 @@ function notifyPhaseSwitch(isBreak) {
   showNotification(message);
 
   try {
-    playPhaseSwitchTone(isBreak);
+    if (!playCustomPhaseSwitchSound(isBreak)) playPhaseSwitchTone(isBreak);
   } catch (_err) {
     // noop
   }
@@ -786,10 +910,7 @@ async function initializeRoom({ rejoin = false } = {}) {
   const existingSettings = existingRoom.settings || {};
   const existingTimer = existingRoom.timer || {};
 
-  if (existingSettings.workMinutes && existingSettings.breakMinutes) {
-    CONFIG.WORK_MINUTES = existingSettings.workMinutes;
-    CONFIG.BREAK_MINUTES = existingSettings.breakMinutes;
-  }
+  applyRoomSettings(existingSettings);
 
   if (state.isHost && !rejoin) {
     await state.roomRef.set({
@@ -947,11 +1068,22 @@ function setupFirebaseListeners() {
   timerRef.on("value", onTimer);
   state.roomSubscriptions.push(() => timerRef.off("value", onTimer));
 
+  const settingsRef = state.roomRef.child("settings");
+  const onSettings = (snapshot) => {
+    const settings = snapshot.val() || {};
+    applyRoomSettings(settings);
+  };
+  settingsRef.on("value", onSettings);
+  state.roomSubscriptions.push(() => settingsRef.off("value", onSettings));
+
   const onRoom = (snapshot) => {
     if (!snapshot.exists() && state.roomId) {
       showNotification("ルームが終了しました", true);
       setTimeout(() => leaveRoom(), 1800);
+      return;
     }
+    const room = snapshot.val() || {};
+    updateHostRole((room.hostId || "") === state.odId);
   };
   state.roomRef.on("value", onRoom);
   state.roomSubscriptions.push(() => state.roomRef.off("value", onRoom));
@@ -985,6 +1117,24 @@ function startHostTimer() {
     }
     syncHostTimerToDb();
   }, 500);
+}
+
+function updateHostRole(nextIsHost) {
+  if (nextIsHost === state.isHost) return;
+  state.isHost = nextIsHost;
+
+  if (nextIsHost) {
+    stopDisplayTimerLoop();
+    startHostTimer();
+    showNotification("ホストに委譲されました");
+  } else {
+    if (state.hostTimerInterval) clearInterval(state.hostTimerInterval);
+    state.hostTimerInterval = null;
+    startDisplayTimerLoop();
+  }
+
+  updateHostControls();
+  writeReconnectSession();
 }
 
 async function switchPhase({ completeAsFullPomodoro = false } = {}) {
@@ -1205,7 +1355,16 @@ async function leaveRoom() {
   clearRoomSubscriptions();
   try {
     if (state.roomRef && state.odId) await state.roomRef.child(`participants/${state.odId}`).remove();
-    if (state.roomRef && state.isHost) await state.roomRef.remove();
+    if (state.roomRef && state.isHost) {
+      const participantsSnap = await state.roomRef.child("participants").once("value");
+      let nextHostId = "";
+      participantsSnap.forEach((child) => {
+        if (!nextHostId) nextHostId = child.key;
+      });
+
+      if (nextHostId) await state.roomRef.update({ hostId: nextHostId });
+      else await state.roomRef.remove();
+    }
   } catch (err) {
     console.error(err);
   }
@@ -1226,7 +1385,8 @@ function saveSettings() {
   CONFIG.BREAK_MINUTES = brk;
   if (state.isHost && state.roomRef) {
     state.roomRef.child("settings").update({ workMinutes: work, breakMinutes: brk });
-    state.remainingSeconds = state.isBreak ? brk * 60 : work * 60;
+    const maxPhaseSeconds = Math.max(0, (state.isBreak ? brk : work) * 60);
+    state.remainingSeconds = Math.min(state.remainingSeconds, maxPhaseSeconds);
     setTimerAnchorFromSnapshot({
       remainingSeconds: state.remainingSeconds,
       lastUpdate: Date.now(),
