@@ -53,13 +53,10 @@ let state = {
   lastProcessedSkipToken: null,
   skipCompleteToken: 0,
   isPhaseSwitching: false,
-<<<<<<< HEAD
   hasSeenTimerSnapshot: false,
   lastObservedTimerBreak: null,
-=======
   callInitInProgress: false,
   lastCallInitAttemptAt: 0,
->>>>>>> b6b059ba761fe4321064688bef0e73383128dca2
 };
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -853,10 +850,6 @@ async function initializeRoom({ rejoin = false } = {}) {
   setupFirebaseListeners();
   showMainScreen();
   startWorkAccumulator();
-<<<<<<< HEAD
-  if (state.isBreak) startCall();
-  if (state.isHost) startHostTimer();
-=======
   if (state.isBreak) ensureBreakCallActive();
   if (state.isHost) {
     stopDisplayTimerLoop();
@@ -864,7 +857,6 @@ async function initializeRoom({ rejoin = false } = {}) {
   } else {
     startDisplayTimerLoop();
   }
->>>>>>> b6b059ba761fe4321064688bef0e73383128dca2
   writeReconnectSession();
 
   const newUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${state.roomId}`;
@@ -918,12 +910,8 @@ function setupFirebaseListeners() {
     const transitionToBreak = breakChanged && nextIsBreak;
     state.isPaused = !!timer.isPaused;
     state.currentCycle = Math.max(0, toFiniteNumber(timer.currentCycle, 0));
-<<<<<<< HEAD
     state.isBreak = nextIsBreak;
-=======
-    state.isBreak = !!timer.isBreak;
     const timerRemaining = Math.max(0, toFiniteNumber(timer.remainingSeconds, state.remainingSeconds));
->>>>>>> b6b059ba761fe4321064688bef0e73383128dca2
     state.skipCompleteToken = toFiniteNumber(timer.skipCompleteToken, 0);
     setTimerAnchorFromSnapshot({ remainingSeconds: timerRemaining }, Date.now());
     if (state.isHost) {
@@ -947,13 +935,8 @@ function setupFirebaseListeners() {
 
     if (transitionToBreak) {
       await flushWorkProgress({ finalizeSession: true });
-<<<<<<< HEAD
-      startCall();
-    } else if (breakChanged && !state.isBreak) {
-=======
       ensureBreakCallActive();
-    } else if (prevBreak && !state.isBreak) {
->>>>>>> b6b059ba761fe4321064688bef0e73383128dca2
+    } else if (breakChanged && !state.isBreak) {
       endCall();
     }
 
