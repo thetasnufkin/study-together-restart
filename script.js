@@ -49,6 +49,7 @@ let state = {
   viewingProfileStats: null,
   viewingProfileActivityMap: new Map(),
   profileSubscriptions: [],
+  roomSubscriptions: [],
   lastProcessedSkipToken: null,
   skipCompleteToken: 0,
   isPhaseSwitching: false,
@@ -332,6 +333,18 @@ function detachPresenceListener() {
   }
   state.connectedRef = null;
   state.connectedRefHandler = null;
+}
+
+function clearRoomSubscriptions() {
+  if (!state.roomSubscriptions || !state.roomSubscriptions.length) return;
+  state.roomSubscriptions.forEach((off) => {
+    try {
+      off();
+    } catch (_err) {
+      // noop
+    }
+  });
+  state.roomSubscriptions = [];
 }
 
 async function upsertParticipantPresence() {
@@ -765,14 +778,33 @@ async function initializeRoom({ rejoin = false } = {}) {
 }
 
 function setupFirebaseListeners() {
-  state.roomRef.child("participants").on("value", (snapshot) => {
-    state.participants.clear();
-    snapshot.forEach((child) => state.participants.set(child.key, child.val()));
+  clearRoomSubscriptions();
+  state.participants.clear();
+  updateParticipantList();
+
+  const participantsRef = state.roomRef.child("participants");
+  const upsertParticipant = (snapshot) => {
+    const data = snapshot.val();
+    if (!data) return;
+    state.participants.set(snapshot.key, data);
     updateParticipantList();
     if (state.isBreak && state.localStream) connectToNewParticipants();
-  });
+  };
+  const removeParticipant = (snapshot) => {
+    const peerId = snapshot.key;
+    state.participants.delete(peerId);
+    cleanupConnection(peerId);
+    updateParticipantList();
+  };
+  participantsRef.on("child_added", upsertParticipant);
+  participantsRef.on("child_changed", upsertParticipant);
+  participantsRef.on("child_removed", removeParticipant);
+  state.roomSubscriptions.push(() => participantsRef.off("child_added", upsertParticipant));
+  state.roomSubscriptions.push(() => participantsRef.off("child_changed", upsertParticipant));
+  state.roomSubscriptions.push(() => participantsRef.off("child_removed", removeParticipant));
 
-  state.roomRef.child("timer").on("value", async (snapshot) => {
+  const timerRef = state.roomRef.child("timer");
+  const onTimer = async (snapshot) => {
     const timer = snapshot.val();
     if (!timer) return;
 
@@ -803,14 +835,18 @@ function setupFirebaseListeners() {
     } else if (prevBreak && !state.isBreak) {
       endCall();
     }
-  });
+  };
+  timerRef.on("value", onTimer);
+  state.roomSubscriptions.push(() => timerRef.off("value", onTimer));
 
-  state.roomRef.on("value", (snapshot) => {
+  const onRoom = (snapshot) => {
     if (!snapshot.exists() && state.roomId) {
       showNotification("ルームが終了しました", true);
       setTimeout(() => leaveRoom(), 1800);
     }
-  });
+  };
+  state.roomRef.on("value", onRoom);
+  state.roomSubscriptions.push(() => state.roomRef.off("value", onRoom));
 }
 
 function startHostTimer() {
@@ -1056,6 +1092,7 @@ async function leaveRoom() {
   if (state.hostTimerInterval) clearInterval(state.hostTimerInterval);
   if (state.heartbeatInterval) clearInterval(state.heartbeatInterval);
   detachPresenceListener();
+  clearRoomSubscriptions();
   try {
     if (state.roomRef && state.odId) await state.roomRef.child(`participants/${state.odId}`).remove();
     if (state.roomRef && state.isHost) await state.roomRef.remove();
