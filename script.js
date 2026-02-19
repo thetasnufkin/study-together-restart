@@ -53,8 +53,13 @@ let state = {
   lastProcessedSkipToken: null,
   skipCompleteToken: 0,
   isPhaseSwitching: false,
+<<<<<<< HEAD
   hasSeenTimerSnapshot: false,
   lastObservedTimerBreak: null,
+=======
+  callInitInProgress: false,
+  lastCallInitAttemptAt: 0,
+>>>>>>> b6b059ba761fe4321064688bef0e73383128dca2
 };
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -298,10 +303,9 @@ function clearReconnectSession() {
   sessionStorage.removeItem(RECONNECT_SESSION_KEY);
 }
 
-function setTimerAnchorFromSnapshot(timer) {
+function setTimerAnchorFromSnapshot(timer, baseNowTs = Date.now()) {
   state.timerAnchorRemainingSeconds = Math.max(0, toFiniteNumber(timer && timer.remainingSeconds, state.remainingSeconds));
-  const lastUpdate = toFiniteNumber(timer && timer.lastUpdate, Date.now());
-  state.timerAnchorLastUpdateAt = lastUpdate > 0 ? lastUpdate : Date.now();
+  state.timerAnchorLastUpdateAt = baseNowTs;
 }
 
 function getAnchoredRemainingSeconds(nowTs = Date.now()) {
@@ -316,6 +320,10 @@ function refreshTimerFromAnchor() {
 }
 
 function startDisplayTimerLoop() {
+  if (state.isHost) {
+    stopDisplayTimerLoop();
+    return;
+  }
   if (state.displayTimerInterval) clearInterval(state.displayTimerInterval);
   state.displayTimerInterval = setInterval(() => {
     if (!state.roomRef) return;
@@ -347,6 +355,25 @@ function clearRoomSubscriptions() {
     }
   });
   state.roomSubscriptions = [];
+}
+
+function ensureBreakCallActive() {
+  if (!state.isBreak) return;
+  if (state.localStream) {
+    connectToNewParticipants();
+    return;
+  }
+
+  const now = Date.now();
+  if (state.callInitInProgress) return;
+  if (now - state.lastCallInitAttemptAt < 10000) return;
+  state.callInitInProgress = true;
+  state.lastCallInitAttemptAt = now;
+  startCall()
+    .catch((err) => console.error("ensureBreakCallActive failed:", err))
+    .finally(() => {
+      state.callInitInProgress = false;
+    });
 }
 
 async function upsertParticipantPresence() {
@@ -825,10 +852,19 @@ async function initializeRoom({ rejoin = false } = {}) {
   await initializePeer();
   setupFirebaseListeners();
   showMainScreen();
-  startDisplayTimerLoop();
   startWorkAccumulator();
+<<<<<<< HEAD
   if (state.isBreak) startCall();
   if (state.isHost) startHostTimer();
+=======
+  if (state.isBreak) ensureBreakCallActive();
+  if (state.isHost) {
+    stopDisplayTimerLoop();
+    startHostTimer();
+  } else {
+    startDisplayTimerLoop();
+  }
+>>>>>>> b6b059ba761fe4321064688bef0e73383128dca2
   writeReconnectSession();
 
   const newUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${state.roomId}`;
@@ -849,7 +885,7 @@ function setupFirebaseListeners() {
     if (!data) return;
     state.participants.set(snapshot.key, data);
     updateParticipantList();
-    if (state.isBreak && state.localStream) connectToNewParticipants();
+    if (state.isBreak) ensureBreakCallActive();
   };
   const removeParticipant = (snapshot) => {
     const peerId = snapshot.key;
@@ -882,10 +918,20 @@ function setupFirebaseListeners() {
     const transitionToBreak = breakChanged && nextIsBreak;
     state.isPaused = !!timer.isPaused;
     state.currentCycle = Math.max(0, toFiniteNumber(timer.currentCycle, 0));
+<<<<<<< HEAD
     state.isBreak = nextIsBreak;
+=======
+    state.isBreak = !!timer.isBreak;
+    const timerRemaining = Math.max(0, toFiniteNumber(timer.remainingSeconds, state.remainingSeconds));
+>>>>>>> b6b059ba761fe4321064688bef0e73383128dca2
     state.skipCompleteToken = toFiniteNumber(timer.skipCompleteToken, 0);
-    setTimerAnchorFromSnapshot(timer);
-    refreshTimerFromAnchor();
+    setTimerAnchorFromSnapshot({ remainingSeconds: timerRemaining }, Date.now());
+    if (state.isHost) {
+      state.remainingSeconds = timerRemaining;
+      updateTimerDisplay();
+    } else {
+      refreshTimerFromAnchor();
+    }
 
     const nowActive = isWorkTimingActive();
     if (!wasActive && nowActive) startOrResumeTaskSegment(Date.now());
@@ -897,11 +943,17 @@ function setupFirebaseListeners() {
     updateCycleIndicator();
     updateCallUI();
     updateHostControls();
+    if (state.isBreak) ensureBreakCallActive();
 
     if (transitionToBreak) {
       await flushWorkProgress({ finalizeSession: true });
+<<<<<<< HEAD
       startCall();
     } else if (breakChanged && !state.isBreak) {
+=======
+      ensureBreakCallActive();
+    } else if (prevBreak && !state.isBreak) {
+>>>>>>> b6b059ba761fe4321064688bef0e73383128dca2
       endCall();
     }
 
@@ -1093,6 +1145,8 @@ function cleanupConnection(peerId) {
 }
 
 function endCall() {
+  state.callInitInProgress = false;
+  state.lastCallInitAttemptAt = 0;
   if (state.localStream) {
     state.localStream.getTracks().forEach((track) => track.stop());
     state.localStream = null;
