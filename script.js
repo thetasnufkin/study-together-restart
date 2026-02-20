@@ -54,6 +54,9 @@ let state = {
   lastProcessedSkipToken: null,
   skipCompleteToken: 0,
   isPhaseSwitching: false,
+  serverTimeOffsetMs: 0,
+  hostElectionInProgress: false,
+  lastHostElectionAttemptAt: 0,
   hasSeenTimerSnapshot: false,
   lastObservedTimerBreak: null,
   callInitInProgress: false,
@@ -113,6 +116,7 @@ async function initApp() {
 
   state.firebaseApp = firebase.app();
   state.database = firebase.database();
+  bindServerClockOffset();
   state.auth = firebase.auth();
   bindAuthState();
 
@@ -130,6 +134,13 @@ async function initApp() {
 
   updateConnectionStatus("connected", "Firebase 接続済み");
   setJoinButtonsDisabled(false);
+}
+
+function bindServerClockOffset() {
+  if (!state.database) return;
+  state.database.ref(".info/serverTimeOffset").on("value", (snapshot) => {
+    state.serverTimeOffsetMs = toFiniteNumber(snapshot.val(), 0);
+  });
 }
 
 async function tryAutoReconnect(roomId) {
@@ -309,19 +320,24 @@ function clearReconnectSession() {
   sessionStorage.removeItem(RECONNECT_SESSION_KEY);
 }
 
-function setTimerAnchorFromSnapshot(timer, baseNowTs = Date.now()) {
-  state.timerAnchorRemainingSeconds = Math.max(0, toFiniteNumber(timer && timer.remainingSeconds, state.remainingSeconds));
-  state.timerAnchorLastUpdateAt = baseNowTs;
+function getEstimatedServerNow() {
+  return Date.now() + toFiniteNumber(state.serverTimeOffsetMs, 0);
 }
 
-function getAnchoredRemainingSeconds(nowTs = Date.now()) {
+function setTimerAnchorFromSnapshot(timer, fallbackNowTs = getEstimatedServerNow()) {
+  state.timerAnchorRemainingSeconds = Math.max(0, toFiniteNumber(timer && timer.remainingSeconds, state.remainingSeconds));
+  const rawLastUpdate = toFiniteNumber(timer && timer.lastUpdate, 0);
+  state.timerAnchorLastUpdateAt = rawLastUpdate > 0 ? rawLastUpdate : fallbackNowTs;
+}
+
+function getAnchoredRemainingSeconds(nowTs = getEstimatedServerNow()) {
   if (state.isPaused) return Math.max(0, Math.floor(state.timerAnchorRemainingSeconds));
   const elapsedSec = Math.max(0, Math.floor((nowTs - state.timerAnchorLastUpdateAt) / 1000));
   return Math.max(0, Math.floor(state.timerAnchorRemainingSeconds) - elapsedSec);
 }
 
 function refreshTimerFromAnchor() {
-  state.remainingSeconds = getAnchoredRemainingSeconds(Date.now());
+  state.remainingSeconds = getAnchoredRemainingSeconds(getEstimatedServerNow());
   updateTimerDisplay();
 }
 
@@ -588,6 +604,54 @@ function notifyPhaseSwitch(isBreak) {
       new Notification("Study Together", {
         body: message,
         tag: "phase-switch",
+      });
+    } catch (_err) {
+      // noop
+    }
+  }
+}
+
+function playParticipantJoinTone() {
+  if (!window.AudioContext && !window.webkitAudioContext) return;
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AudioContextClass();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+
+  osc.type = "triangle";
+  osc.frequency.value = 740;
+  gain.gain.value = 0.0001;
+
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+
+  const now = ctx.currentTime;
+  gain.gain.exponentialRampToValueAtTime(0.06, now + 0.015);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+  osc.start(now);
+  osc.stop(now + 0.19);
+  osc.onended = () => ctx.close().catch(() => {});
+}
+
+function notifyParticipantJoined(data) {
+  const nickname = String((data && data.nickname) || "参加者");
+  const message = `${nickname} が入室しました`;
+  showNotification(message);
+  try {
+    playParticipantJoinTone();
+  } catch (_err) {
+    // noop
+  }
+
+  if (
+    typeof Notification !== "undefined" &&
+    Notification.permission === "granted" &&
+    document.visibilityState === "hidden"
+  ) {
+    try {
+      new Notification("Study Together", {
+        body: message,
+        tag: "participant-joined",
       });
     } catch (_err) {
       // noop
@@ -941,10 +1005,10 @@ async function initializeRoom({ rejoin = false } = {}) {
     state.skipCompleteToken = toFiniteNumber(existingTimer.skipCompleteToken, 0);
     setTimerAnchorFromSnapshot(existingTimer);
   } else {
-    setTimerAnchorFromSnapshot({
-      remainingSeconds: state.remainingSeconds,
-      lastUpdate: Date.now(),
-    });
+    setTimerAnchorFromSnapshot(
+      { remainingSeconds: state.remainingSeconds, lastUpdate: getEstimatedServerNow() },
+      getEstimatedServerNow()
+    );
   }
 
   state.participantRef = state.roomRef.child(`participants/${state.odId}`);
@@ -968,7 +1032,7 @@ async function initializeRoom({ rejoin = false } = {}) {
   }, 5000);
 
   await initializePeer();
-  setupFirebaseListeners();
+  await setupFirebaseListeners();
   showMainScreen();
   startWorkAccumulator();
   if (state.isBreak) ensureBreakCallActive();
@@ -985,15 +1049,31 @@ async function initializeRoom({ rejoin = false } = {}) {
   showNotification(state.isHost ? `ルーム ${state.roomId} を作成しました` : `ルーム ${state.roomId} に参加しました`);
 }
 
-function setupFirebaseListeners() {
+async function setupFirebaseListeners() {
   clearRoomSubscriptions();
   state.participants.clear();
   state.hasSeenTimerSnapshot = false;
   state.lastObservedTimerBreak = null;
-  updateParticipantList();
 
   const participantsRef = state.roomRef.child("participants");
-  const upsertParticipant = (snapshot) => {
+  const initialParticipantsSnap = await participantsRef.once("value");
+  initialParticipantsSnap.forEach((child) => {
+    const data = child.val();
+    if (!data) return;
+    state.participants.set(child.key, data);
+  });
+  updateParticipantList();
+
+  const onParticipantAdded = (snapshot) => {
+    const data = snapshot.val();
+    if (!data) return;
+    const alreadyKnown = state.participants.has(snapshot.key);
+    state.participants.set(snapshot.key, data);
+    updateParticipantList();
+    if (state.isBreak) ensureBreakCallActive();
+    if (!alreadyKnown && snapshot.key !== state.odId) notifyParticipantJoined(data);
+  };
+  const onParticipantChanged = (snapshot) => {
     const data = snapshot.val();
     if (!data) return;
     state.participants.set(snapshot.key, data);
@@ -1006,11 +1086,11 @@ function setupFirebaseListeners() {
     cleanupConnection(peerId);
     updateParticipantList();
   };
-  participantsRef.on("child_added", upsertParticipant);
-  participantsRef.on("child_changed", upsertParticipant);
+  participantsRef.on("child_added", onParticipantAdded);
+  participantsRef.on("child_changed", onParticipantChanged);
   participantsRef.on("child_removed", removeParticipant);
-  state.roomSubscriptions.push(() => participantsRef.off("child_added", upsertParticipant));
-  state.roomSubscriptions.push(() => participantsRef.off("child_changed", upsertParticipant));
+  state.roomSubscriptions.push(() => participantsRef.off("child_added", onParticipantAdded));
+  state.roomSubscriptions.push(() => participantsRef.off("child_changed", onParticipantChanged));
   state.roomSubscriptions.push(() => participantsRef.off("child_removed", removeParticipant));
 
   const timerRef = state.roomRef.child("timer");
@@ -1034,12 +1114,27 @@ function setupFirebaseListeners() {
     state.isBreak = nextIsBreak;
     const timerRemaining = Math.max(0, toFiniteNumber(timer.remainingSeconds, state.remainingSeconds));
     state.skipCompleteToken = toFiniteNumber(timer.skipCompleteToken, 0);
-    setTimerAnchorFromSnapshot({ remainingSeconds: timerRemaining }, Date.now());
-    if (state.isHost) {
-      state.remainingSeconds = timerRemaining;
-      updateTimerDisplay();
+    const shouldAdoptRemoteRemaining =
+      !state.isHost ||
+      state.isPaused ||
+      isFirstTimerSnapshot ||
+      state.isPhaseSwitching ||
+      Math.abs(state.remainingSeconds - timerRemaining) > 2;
+
+    if (shouldAdoptRemoteRemaining) {
+      setTimerAnchorFromSnapshot(timer);
+      if (state.isHost) {
+        state.remainingSeconds = timerRemaining;
+        updateTimerDisplay();
+      } else {
+        refreshTimerFromAnchor();
+      }
     } else {
-      refreshTimerFromAnchor();
+      setTimerAnchorFromSnapshot({
+        remainingSeconds: state.remainingSeconds,
+        lastUpdate: getEstimatedServerNow(),
+      });
+      if (!state.isHost) refreshTimerFromAnchor();
     }
 
     const nowActive = isWorkTimingActive();
@@ -1083,6 +1178,7 @@ function setupFirebaseListeners() {
       return;
     }
     const room = snapshot.val() || {};
+    ensureHostAssignment(room);
     updateHostRole((room.hostId || "") === state.odId);
   };
   state.roomRef.on("value", onRoom);
@@ -1105,10 +1201,10 @@ function startHostTimer() {
     state.hostLastTickAt += elapsedSec * 1000;
 
     state.remainingSeconds = Math.max(0, state.remainingSeconds - elapsedSec);
-    setTimerAnchorFromSnapshot({
-      remainingSeconds: state.remainingSeconds,
-      lastUpdate: now,
-    });
+    setTimerAnchorFromSnapshot(
+      { remainingSeconds: state.remainingSeconds, lastUpdate: getEstimatedServerNow() },
+      getEstimatedServerNow()
+    );
     refreshTimerFromAnchor();
     if (state.remainingSeconds <= 0) {
       syncHostTimerToDb();
@@ -1117,6 +1213,39 @@ function startHostTimer() {
     }
     syncHostTimerToDb();
   }, 500);
+}
+
+function ensureHostAssignment(room) {
+  if (!state.roomRef) return;
+  const participants = room && typeof room.participants === "object" ? room.participants : {};
+  const currentHostId = typeof (room && room.hostId) === "string" ? room.hostId : "";
+  if (currentHostId && Object.prototype.hasOwnProperty.call(participants, currentHostId)) return;
+
+  const nowServer = getEstimatedServerNow();
+  const participantIds = Object.keys(participants);
+  if (!participantIds.length) return;
+
+  const activeIds = participantIds
+    .filter((id) => {
+      const lastSeen = toFiniteNumber(participants[id] && participants[id].lastSeen, 0);
+      return lastSeen > 0 && nowServer - lastSeen < 20000;
+    })
+    .sort();
+  const candidateIds = activeIds.length ? activeIds : participantIds.sort();
+  const nextHostId = candidateIds[0];
+  if (!nextHostId || nextHostId !== state.odId) return;
+
+  const now = Date.now();
+  if (state.hostElectionInProgress || now - state.lastHostElectionAttemptAt < 5000) return;
+  state.hostElectionInProgress = true;
+  state.lastHostElectionAttemptAt = now;
+  state.roomRef
+    .child("hostId")
+    .set(nextHostId)
+    .catch((err) => console.error("host election failed:", err))
+    .finally(() => {
+      state.hostElectionInProgress = false;
+    });
 }
 
 function updateHostRole(nextIsHost) {
@@ -1167,10 +1296,10 @@ async function switchPhase({ completeAsFullPomodoro = false } = {}) {
       state.currentCycle = (state.currentCycle + 1) % 4;
       state.skipCompleteToken = 0;
     }
-    setTimerAnchorFromSnapshot({
-      remainingSeconds: state.remainingSeconds,
-      lastUpdate: Date.now(),
-    });
+    setTimerAnchorFromSnapshot(
+      { remainingSeconds: state.remainingSeconds, lastUpdate: getEstimatedServerNow() },
+      getEstimatedServerNow()
+    );
     refreshTimerFromAnchor();
     updateCycleIndicator();
     updateCallUI();
@@ -1193,10 +1322,10 @@ async function toggleHostTimer() {
     state.hostLastTickAt = Date.now();
     startOrResumeTaskSegment(Date.now());
   }
-  setTimerAnchorFromSnapshot({
-    remainingSeconds: state.remainingSeconds,
-    lastUpdate: Date.now(),
-  });
+  setTimerAnchorFromSnapshot(
+    { remainingSeconds: state.remainingSeconds, lastUpdate: getEstimatedServerNow() },
+    getEstimatedServerNow()
+  );
   refreshTimerFromAnchor();
   syncHostTimerToDb();
   updateHostControls();
@@ -1387,10 +1516,10 @@ function saveSettings() {
     state.roomRef.child("settings").update({ workMinutes: work, breakMinutes: brk });
     const maxPhaseSeconds = Math.max(0, (state.isBreak ? brk : work) * 60);
     state.remainingSeconds = Math.min(state.remainingSeconds, maxPhaseSeconds);
-    setTimerAnchorFromSnapshot({
-      remainingSeconds: state.remainingSeconds,
-      lastUpdate: Date.now(),
-    });
+    setTimerAnchorFromSnapshot(
+      { remainingSeconds: state.remainingSeconds, lastUpdate: getEstimatedServerNow() },
+      getEstimatedServerNow()
+    );
     syncHostTimerToDb();
     updateHostControls();
   }
