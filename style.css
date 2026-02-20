@@ -879,7 +879,7 @@ body {
   border-radius: 20px;
   padding: 30px;
   width: 90%;
-  max-width: 400px;
+  max-width: 520px;
 }
 
 .settings-content h2 {
@@ -914,6 +914,8 @@ body {
 }
 
 .setting-row-file {
+  display: grid;
+  grid-template-columns: 160px 1fr;
   align-items: flex-start;
   gap: 12px;
 }
@@ -921,12 +923,52 @@ body {
 .setting-controls {
   display: grid;
   gap: 8px;
-  justify-items: start;
+  justify-items: stretch;
+  width: 100%;
 }
 
-.setting-row input[type="file"] {
-  max-width: 210px;
-  color: #ccd6f6;
+.setting-file-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.setting-file-input {
+  display: none;
+}
+
+.setting-file-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(100, 255, 218, 0.45);
+  background: rgba(100, 255, 218, 0.12);
+  color: #baffee;
+  font-size: 0.78rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.setting-file-btn:hover {
+  border-color: rgba(100, 255, 218, 0.72);
+  background: rgba(100, 255, 218, 0.2);
+}
+
+.setting-file-name {
+  color: #9fb2d5;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
 }
 
 .setting-hint {
@@ -942,4 +984,10 @@ body {
 
 .close-settings {
   margin-top: 20px;
+}
+
+@media (max-width: 640px) {
+  .setting-row-file {
+    grid-template-columns: 1fr;
+  }
 }

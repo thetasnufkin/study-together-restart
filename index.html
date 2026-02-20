@@ -11,7 +11,7 @@
   <script defer src="/__/firebase/10.7.1/firebase-database-compat.js"></script>
   <script defer src="/__/firebase/init.js"></script>
   <script defer src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <script defer src="script.js?v=20260213-20"></script>
+  <script defer src="script.js?v=20260213-22"></script>
 </head>
 <body>
   <button class="settings-toggle" onclick="toggleSettings()" title="設定">設定</button>
@@ -43,7 +43,7 @@
         <input type="text" id="nickname" maxlength="10" placeholder="例: たろう">
       </div>
       <div class="input-group">
-        <label>ルームID (作成時は入力不要)</label>
+        <label>ルームID (空欄で自動生成 / 入力で固定ID作成)</label>
         <input type="text" id="roomId" maxlength="6" placeholder="例: ABC123" style="text-transform: uppercase;">
       </div>
 
@@ -151,9 +151,25 @@
       <div class="setting-row setting-row-file">
         <label for="switchSoundFile">切り替え音 (mp3 / wav)</label>
         <div class="setting-controls">
-          <input type="file" id="switchSoundFile" accept=".mp3,.wav,audio/mpeg,audio/wav,audio/x-wav">
+          <div class="setting-file-line">
+            <input class="setting-file-input" type="file" id="switchSoundFile" accept=".mp3,.wav,audio/mpeg,audio/wav,audio/x-wav">
+            <label class="setting-file-btn" for="switchSoundFile">ファイルを選択</label>
+            <span class="setting-file-name" id="switchSoundFileName">未選択</span>
+          </div>
           <div class="setting-hint" id="switchSoundStatus">現在: デフォルト音</div>
           <button class="btn btn-secondary setting-inline-btn" onclick="clearPhaseSwitchSound()">デフォルトに戻す</button>
+        </div>
+      </div>
+      <div class="setting-row setting-row-file">
+        <label for="joinSoundFile">入室音 (mp3 / wav)</label>
+        <div class="setting-controls">
+          <div class="setting-file-line">
+            <input class="setting-file-input" type="file" id="joinSoundFile" accept=".mp3,.wav,audio/mpeg,audio/wav,audio/x-wav">
+            <label class="setting-file-btn" for="joinSoundFile">ファイルを選択</label>
+            <span class="setting-file-name" id="joinSoundFileName">未選択</span>
+          </div>
+          <div class="setting-hint" id="joinSoundStatus">現在: デフォルト音</div>
+          <button class="btn btn-secondary setting-inline-btn" onclick="clearParticipantJoinSound()">デフォルトに戻す</button>
         </div>
       </div>
       <button class="btn btn-primary close-settings" onclick="saveSettings()">保存して閉じる</button>

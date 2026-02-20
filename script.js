@@ -64,6 +64,9 @@ let state = {
   phaseSwitchSoundDataUrl: "",
   phaseSwitchSoundName: "",
   phaseSwitchSoundUpdatedBy: "",
+  participantJoinSoundDataUrl: "",
+  participantJoinSoundName: "",
+  participantJoinSoundUpdatedBy: "",
 };
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -81,7 +84,12 @@ window.addEventListener("DOMContentLoaded", () => {
   if (switchSoundFile) {
     switchSoundFile.addEventListener("change", onPhaseSwitchSoundFileSelected);
   }
+  const joinSoundFile = document.getElementById("joinSoundFile");
+  if (joinSoundFile) {
+    joinSoundFile.addEventListener("change", onParticipantJoinSoundFileSelected);
+  }
   updateSwitchSoundStatus();
+  updateJoinSoundStatus();
 });
 
 function chooseTemplate(template) {
@@ -269,6 +277,14 @@ async function continueAsGuest() {
 function generateId(length = 6) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   return Array.from({ length }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+}
+
+function normalizeRoomId(raw) {
+  return String(raw || "").trim().toUpperCase();
+}
+
+function isValidRoomId(roomId) {
+  return /^[A-Z2-9]{6}$/.test(roomId);
 }
 
 function formatTime(seconds) {
@@ -459,6 +475,17 @@ function updateSwitchSoundStatus() {
   statusEl.textContent = `現在: ${state.phaseSwitchSoundName || "アップロード音"}${updatedBy}`;
 }
 
+function updateJoinSoundStatus() {
+  const statusEl = document.getElementById("joinSoundStatus");
+  if (!statusEl) return;
+  if (!state.participantJoinSoundDataUrl) {
+    statusEl.textContent = "現在: デフォルト音";
+    return;
+  }
+  const updatedBy = state.participantJoinSoundUpdatedBy ? ` (${state.participantJoinSoundUpdatedBy})` : "";
+  statusEl.textContent = `現在: ${state.participantJoinSoundName || "アップロード音"}${updatedBy}`;
+}
+
 function applyRoomSettings(settings) {
   const nextWork = toFiniteNumber(settings && settings.workMinutes, CONFIG.WORK_MINUTES);
   const nextBreak = toFiniteNumber(settings && settings.breakMinutes, CONFIG.BREAK_MINUTES);
@@ -474,12 +501,22 @@ function applyRoomSettings(settings) {
   state.phaseSwitchSoundUpdatedBy = typeof (settings && settings.switchSoundUpdatedBy) === "string"
     ? settings.switchSoundUpdatedBy
     : "";
+  state.participantJoinSoundDataUrl = typeof (settings && settings.joinSoundDataUrl) === "string"
+    ? settings.joinSoundDataUrl
+    : "";
+  state.participantJoinSoundName = typeof (settings && settings.joinSoundName) === "string"
+    ? settings.joinSoundName
+    : "";
+  state.participantJoinSoundUpdatedBy = typeof (settings && settings.joinSoundUpdatedBy) === "string"
+    ? settings.joinSoundUpdatedBy
+    : "";
 
   const workInput = document.getElementById("workMinutes");
   const breakInput = document.getElementById("breakMinutes");
   if (workInput) workInput.value = String(CONFIG.WORK_MINUTES);
   if (breakInput) breakInput.value = String(CONFIG.BREAK_MINUTES);
   updateSwitchSoundStatus();
+  updateJoinSoundStatus();
   refreshTimerFromAnchor();
 }
 
@@ -492,13 +529,21 @@ function readFileAsDataUrl(file) {
   });
 }
 
+function setSoundFileNameLabel(labelId, name) {
+  const el = document.getElementById(labelId);
+  if (!el) return;
+  el.textContent = name || "未選択";
+}
+
 async function onPhaseSwitchSoundFileSelected(e) {
   const input = e && e.target;
   const file = input && input.files && input.files[0];
   if (!file) return;
+  setSoundFileNameLabel("switchSoundFileName", file.name);
   if (!state.roomRef) {
     showNotification("ルーム参加後に設定してください", true);
     input.value = "";
+    setSoundFileNameLabel("switchSoundFileName", "");
     return;
   }
 
@@ -509,11 +554,13 @@ async function onPhaseSwitchSoundFileSelected(e) {
   if (!isMp3 && !isWav) {
     showNotification("mp3 または wav ファイルを選択してください", true);
     input.value = "";
+    setSoundFileNameLabel("switchSoundFileName", "");
     return;
   }
   if (file.size > MAX_SWITCH_SOUND_FILE_SIZE) {
     showNotification("音源サイズは 2MB 以下にしてください", true);
     input.value = "";
+    setSoundFileNameLabel("switchSoundFileName", "");
     return;
   }
 
@@ -532,6 +579,7 @@ async function onPhaseSwitchSoundFileSelected(e) {
     showNotification("切り替え音の更新に失敗しました", true);
   } finally {
     input.value = "";
+    setSoundFileNameLabel("switchSoundFileName", "");
   }
 }
 
@@ -549,6 +597,71 @@ async function clearPhaseSwitchSound() {
   } catch (err) {
     console.error("clear switch sound failed:", err);
     showNotification("切り替え音のリセットに失敗しました", true);
+  }
+}
+
+async function onParticipantJoinSoundFileSelected(e) {
+  const input = e && e.target;
+  const file = input && input.files && input.files[0];
+  if (!file) return;
+  setSoundFileNameLabel("joinSoundFileName", file.name);
+  if (!state.roomRef) {
+    showNotification("ルーム参加後に設定してください", true);
+    input.value = "";
+    setSoundFileNameLabel("joinSoundFileName", "");
+    return;
+  }
+
+  const lowerName = file.name.toLowerCase();
+  const type = (file.type || "").toLowerCase();
+  const isMp3 = type.includes("mpeg") || lowerName.endsWith(".mp3");
+  const isWav = type.includes("wav") || lowerName.endsWith(".wav");
+  if (!isMp3 && !isWav) {
+    showNotification("mp3 または wav ファイルを選択してください", true);
+    input.value = "";
+    setSoundFileNameLabel("joinSoundFileName", "");
+    return;
+  }
+  if (file.size > MAX_SWITCH_SOUND_FILE_SIZE) {
+    showNotification("音源サイズは 2MB 以下にしてください", true);
+    input.value = "";
+    setSoundFileNameLabel("joinSoundFileName", "");
+    return;
+  }
+
+  try {
+    const dataUrl = await readFileAsDataUrl(file);
+    const updater = state.nickname || (state.authUser && (state.authUser.displayName || state.authUser.email)) || "someone";
+    await state.roomRef.child("settings").update({
+      joinSoundDataUrl: dataUrl,
+      joinSoundName: file.name.slice(0, 80),
+      joinSoundUpdatedBy: String(updater).slice(0, 30),
+      joinSoundUpdatedAt: firebase.database.ServerValue.TIMESTAMP,
+    });
+    showNotification("入室音を更新しました");
+  } catch (err) {
+    console.error("join sound upload failed:", err);
+    showNotification("入室音の更新に失敗しました", true);
+  } finally {
+    input.value = "";
+    setSoundFileNameLabel("joinSoundFileName", "");
+  }
+}
+
+async function clearParticipantJoinSound() {
+  if (!state.roomRef) return showNotification("ルーム参加後に設定してください", true);
+  const updater = state.nickname || (state.authUser && (state.authUser.displayName || state.authUser.email)) || "someone";
+  try {
+    await state.roomRef.child("settings").update({
+      joinSoundDataUrl: "",
+      joinSoundName: "",
+      joinSoundUpdatedBy: String(updater).slice(0, 30),
+      joinSoundUpdatedAt: firebase.database.ServerValue.TIMESTAMP,
+    });
+    showNotification("入室音をデフォルトに戻しました");
+  } catch (err) {
+    console.error("clear join sound failed:", err);
+    showNotification("入室音のリセットに失敗しました", true);
   }
 }
 
@@ -633,12 +746,23 @@ function playParticipantJoinTone() {
   osc.onended = () => ctx.close().catch(() => {});
 }
 
+function playCustomParticipantJoinSound() {
+  if (!state.participantJoinSoundDataUrl) return false;
+  const audio = new Audio(state.participantJoinSoundDataUrl);
+  audio.currentTime = 0;
+  const playPromise = audio.play();
+  if (playPromise && typeof playPromise.catch === "function") {
+    playPromise.catch((_err) => playParticipantJoinTone());
+  }
+  return true;
+}
+
 function notifyParticipantJoined(data) {
   const nickname = String((data && data.nickname) || "参加者");
   const message = `${nickname} が入室しました`;
   showNotification(message);
   try {
-    playParticipantJoinTone();
+    if (!playCustomParticipantJoinSound()) playParticipantJoinTone();
   } catch (_err) {
     // noop
   }
@@ -919,11 +1043,33 @@ async function ensureUserProfile(user) {
 async function createRoom() {
   if (!state.database) return showNotification("Firebase 接続が完了していません", true);
   const nickname = document.getElementById("nickname").value.trim();
+  const requestedRoomId = normalizeRoomId(document.getElementById("roomId").value);
   if (!nickname) return showNotification("ニックネームを入力してください", true);
+  if (requestedRoomId && !isValidRoomId(requestedRoomId)) {
+    return showNotification("ルームIDは6文字（A-Z, 2-9）で入力してください", true);
+  }
 
   maybeEnableBrowserNotifications();
   state.nickname = nickname.slice(0, 10);
-  state.roomId = generateId();
+  if (requestedRoomId) {
+    const existingSnap = await state.database.ref(`rooms/${requestedRoomId}`).once("value");
+    if (existingSnap.exists()) return showNotification("そのルームIDは使用中です", true);
+    state.roomId = requestedRoomId;
+  } else {
+    let generated = "";
+    for (let i = 0; i < 5; i += 1) {
+      const candidate = generateId();
+      // Rare collision guard for generated IDs.
+      // eslint-disable-next-line no-await-in-loop
+      const existingSnap = await state.database.ref(`rooms/${candidate}`).once("value");
+      if (!existingSnap.exists()) {
+        generated = candidate;
+        break;
+      }
+    }
+    if (!generated) return showNotification("ルームID生成に失敗しました。再試行してください", true);
+    state.roomId = generated;
+  }
   state.odId = generateId(10);
   state.isHost = true;
   state.isPaused = true;
@@ -945,9 +1091,10 @@ async function createRoom() {
 async function joinRoom() {
   if (!state.database) return showNotification("Firebase 接続が完了していません", true);
   const nickname = document.getElementById("nickname").value.trim();
-  const roomId = document.getElementById("roomId").value.trim().toUpperCase();
+  const roomId = normalizeRoomId(document.getElementById("roomId").value);
   if (!nickname) return showNotification("ニックネームを入力してください", true);
   if (!roomId) return showNotification("ルームIDを入力してください", true);
+  if (!isValidRoomId(roomId)) return showNotification("ルームIDは6文字（A-Z, 2-9）です", true);
 
   maybeEnableBrowserNotifications();
   const roomSnap = await state.database.ref(`rooms/${roomId}`).once("value");
